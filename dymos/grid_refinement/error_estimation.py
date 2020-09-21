@@ -268,6 +268,47 @@ def compute_state_quadratures(x_hat, f_hat, t_duration, transcription):
     return x_prime
 
 
+def compute_error_quadratures(e_rel, transcription):
+    """
+    Compute the integral of the given states at each node in the given transcription.
+
+    This estimation of the states is computed with a quadrature.
+
+    Parameters
+    ----------
+    e : dict of (str: float)
+        The relative error (positive) at the nodes of the given transcription
+    transcription : Radau or GaussLobatto
+        The transcription instance used to compute f_hat.
+
+    Returns
+    -------
+    x_prime : dict
+        A dictionary keyed by state name containing the estimated state values at each node,
+        computed using a quadrature.
+
+    """
+    gd = transcription.grid_data
+
+    # Build the integration matrix which integrates state values at all nodes on the new grid.
+    I = integration_matrix(gd)
+
+    left_end_idxs = gd.subset_node_indices['segment_ends'][0::2]
+    all_idxs = gd.subset_node_indices['all']
+    not_left_end_idxs = np.array(sorted(list(set(all_idxs).difference(set(left_end_idxs)))))
+
+    print(not_left_end_idxs)
+    print(left_end_idxs_repeated)
+    
+    e_rel_accum = np.zeros_like(e_rel)
+    e_rel_accum[left_end_idxs, ...] = e_rel[left_end_idxs, ...]
+    nnps = np.array(gd.subset_num_nodes_per_segment['all']) - 1
+    left_end_idxs_repeated = np.repeat(left_end_idxs, nnps)
+    e_rel_accum[not_left_end_idxs, ...] = e_rel_accum[left_end_idxs_repeated, ...] + np.dot(I, e_rel[not_left_end_idxs, ...])
+
+    return e_rel_accum
+
+
 def check_error(phases):
     """
     Compute the error in every solved segment
@@ -326,17 +367,31 @@ def check_error(phases):
         e = {}  # The relative error computed in each state at each node (Eq. 20 pt 2)
 
         for state_name, options in phase.state_options.items():
+            # The absolute error at each node in the modified transcription
             E[state_name] = np.abs(x_hat[state_name] - x[state_name])  # Equation 20.1
             e[state_name] = np.zeros_like(E[state_name])               # Equation 20.2
             for k in range(numseg):
+                # Get the indices of the kth segment within all nodes
                 i1, i2 = new_tx.grid_data.subset_segment_indices['all'][k, :]
                 k_idxs = new_tx.grid_data.subset_node_indices['all'][i1:i2]
+                # Compute the relative error for each state at each node within segment k
                 e[state_name][k_idxs, ...] = E[state_name][k_idxs] \
                     / (1.0 + np.max(np.abs(x[state_name][k_idxs])))
-                if np.any(np.max(e[state_name][k_idxs]) > refine_results[phase_path]['max_rel_error'][k]):
-                    refine_results[phase_path]['max_rel_error'][k] = np.max(e[state_name][k_idxs])
-                    refine_results[phase_path]['error_state'] = state_name
-                    if refine_results[phase_path]['max_rel_error'][k] > phase.refine_options['tolerance']:
-                        refine_results[phase_path]['need_refinement'][k] = True
+
+            # Now quadrature the error to get the accumulated error at each segment
+            I = integration_matrix(new_tx.grid_data)
+
+            e_accum = compute_error_quadratures(e, new_tx)
+
+            print(e_accum)
+            exit(0)
+
+
+
+            # if np.any(np.max(e[state_name][k_idxs]) > refine_results[phase_path]['max_rel_error'][k]):
+            #     refine_results[phase_path]['max_rel_error'][k] = np.max(e[state_name][k_idxs])
+            #     refine_results[phase_path]['error_state'] = state_name
+            #     if refine_results[phase_path]['max_rel_error'][k] > phase.refine_options['tolerance']:
+            #         refine_results[phase_path]['need_refinement'][k] = True
 
     return refine_results

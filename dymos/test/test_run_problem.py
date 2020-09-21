@@ -251,6 +251,72 @@ class TestRunProblem(unittest.TestCase):
             assert_almost_equal(x0q, fx0s(tq), decimal=2)
             assert_almost_equal(uq, fus(tq), decimal=5)
 
+    def test_run_HS_problem_radau_hadaptive(self):
+        p = om.Problem(model=om.Group())
+        p.driver = om.pyOptSparseDriver()
+        p.driver.declare_coloring()
+        optimizer = 'IPOPT'
+        p.driver.options['optimizer'] = optimizer
+
+        if optimizer == 'SNOPT':
+            p.driver.opt_settings['Major iterations limit'] = 200
+            p.driver.opt_settings['Major feasibility tolerance'] = 1.0E-6
+            p.driver.opt_settings['Major optimality tolerance'] = 1.0E-6
+        elif optimizer == 'IPOPT':
+            p.driver.opt_settings['hessian_approximation'] = 'limited-memory'
+            # p.driver.opt_settings['nlp_scaling_method'] = 'user-scaling'
+            p.driver.opt_settings['print_level'] = 5
+            p.driver.opt_settings['max_iter'] = 200
+            p.driver.opt_settings['linear_solver'] = 'mumps'
+
+        traj = p.model.add_subsystem('traj', dm.Trajectory())
+        phase0 = traj.add_phase('phase0', dm.Phase(ode_class=HyperSensitiveODE,
+                                                   transcription=dm.Radau(num_segments=30, order=3)))
+        phase0.set_time_options(fix_initial=True, fix_duration=True)
+        phase0.add_state('x', fix_initial=True, fix_final=False, rate_source='x_dot', targets=['x'])
+        phase0.add_state('xL', fix_initial=True, fix_final=False, rate_source='L', targets=['xL'])
+        phase0.add_control('u', opt=True, targets=['u'], rate_continuity=False)
+
+        phase0.add_boundary_constraint('x', loc='final', equals=1)
+
+        phase0.add_objective('xL', loc='final')
+
+        phase0.set_refine_options(refine=True, tol=1e-6)
+
+        p.setup(check=True)
+
+        tf = np.float128(100)
+
+        p.set_val('traj.phase0.states:x', phase0.interpolate(ys=[1.5, 1], nodes='state_input'))
+        p.set_val('traj.phase0.states:xL', phase0.interpolate(ys=[0, 1], nodes='state_input'))
+        p.set_val('traj.phase0.t_initial', 0)
+        p.set_val('traj.phase0.t_duration', tf)
+        p.set_val('traj.phase0.controls:u', phase0.interpolate(ys=[-0.6, 2.4],
+                                                               nodes='control_input'))
+        dm.run_problem(p, True, refine_method='h', refine_iteration_limit=10)
+
+        sqrt_two = np.sqrt(2)
+        val = sqrt_two * tf
+        c1 = (1.5 * np.exp(-val) - 1) / (np.exp(-val) - np.exp(val))
+        c2 = (1 - 1.5 * np.exp(val)) / (np.exp(-val) - np.exp(val))
+
+        ui = c1 * (1 + sqrt_two) + c2 * (1 - sqrt_two)
+        uf = c1 * (1 + sqrt_two) * np.exp(val) + c2 * (1 - sqrt_two) * np.exp(-val)
+        J = 0.5 * (c1 ** 2 * (1 + sqrt_two) * np.exp(2 * val) + c2 ** 2 * (1 - sqrt_two) * np.exp(-2 * val) -
+                   (1 + sqrt_two) * c1 ** 2 - (1 - sqrt_two) * c2 ** 2)
+
+        assert_near_equal(p.get_val('traj.phase0.timeseries.controls:u')[0],
+                          ui,
+                          tolerance=5e-4)
+
+        assert_near_equal(p.get_val('traj.phase0.timeseries.controls:u')[-1],
+                          uf,
+                          tolerance=5e-4)
+
+        assert_near_equal(p.get_val('traj.phase0.timeseries.states:xL')[-1],
+                          J,
+                          tolerance=5e-4)
+
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()

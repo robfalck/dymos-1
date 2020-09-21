@@ -1,10 +1,7 @@
-from .grid_refinement.ph_adaptive.ph_adaptive import PHAdaptive
-from .grid_refinement.hp_adaptive.hp_adaptive import HPAdaptive
+from .grid_refinement import PHAdaptive, HPAdaptive, HAdaptive
 from .grid_refinement.write_iteration import write_error, write_refine_iter
-from .phase.phase import Phase
 
 import openmdao.api as om
-import dymos as dm
 import numpy as np
 from dymos.trajectory.trajectory import Trajectory
 from dymos.load_case import load_case, find_phases
@@ -97,7 +94,7 @@ def run_problem(problem, refine=False, refine_method='hp', refine_iteration_limi
         has been run and grid refinement is complete.
     """
     problem.final_setup()  # make sure command line option hook has a chance to run
-    refinement_methods = {'hp': HPAdaptive, 'ph': PHAdaptive}
+    refinement_methods = {'hp': HPAdaptive, 'ph': PHAdaptive, 'h': HAdaptive}
 
     if run_driver:
         if no_iterate:
