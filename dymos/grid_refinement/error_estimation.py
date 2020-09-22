@@ -297,10 +297,14 @@ def compute_error_quadratures(e_rel, transcription):
     all_idxs = gd.subset_node_indices['all']
     not_left_end_idxs = np.array(sorted(list(set(all_idxs).difference(set(left_end_idxs)))))
 
-    print(not_left_end_idxs)
-    print(left_end_idxs_repeated)
-    
+
     e_rel_accum = np.zeros_like(e_rel)
+
+    print(not_left_end_idxs)
+    print(e_rel_accum)
+    print(e_rel)
+    print(e_rel[left_end_idxs, ...])
+
     e_rel_accum[left_end_idxs, ...] = e_rel[left_end_idxs, ...]
     nnps = np.array(gd.subset_num_nodes_per_segment['all']) - 1
     left_end_idxs_repeated = np.repeat(left_end_idxs, nnps)
@@ -328,12 +332,13 @@ def check_error(phases):
         tx = phase.options['transcription']
         gd = tx.grid_data
         numseg = gd.num_segments
+        nn = gd.subset_num_nodes['all']
 
         refine_results[phase_path]['num_segments'] = numseg
         refine_results[phase_path]['order'] = gd.transcription_order
         refine_results[phase_path]['segment_ends'] = gd.segment_ends
         refine_results[phase_path]['need_refinement'] = np.zeros(numseg, dtype=bool)
-        refine_results[phase_path]['max_rel_error'] = np.zeros(numseg, dtype=float)  # Eq. 21
+        refine_results[phase_path]['max_rel_error_per_seg'] = np.zeros(numseg, dtype=float)  # Eq. 21
         refine_results[phase_path]['error_state'] = ['' for _ in phase.state_options]
 
         # Instantiate a new phase as a copy of the old one, but first up the transcription order
@@ -352,6 +357,8 @@ def check_error(phases):
         else:
             # Only refine GuassLobatto or Radau transcription phases
             continue
+
+        refine_results[phase_path]['max_rel_error_per_node'] = np.zeros(new_tx.grid_data.num_nodes, dtype=float)
 
         # Let x be the interpolated states on the new transcription
         # Let f by the evaluated state rates given the interpolation of the states and controls
@@ -378,20 +385,18 @@ def check_error(phases):
                 e[state_name][k_idxs, ...] = E[state_name][k_idxs] \
                     / (1.0 + np.max(np.abs(x[state_name][k_idxs])))
 
-            # Now quadrature the error to get the accumulated error at each segment
-            I = integration_matrix(new_tx.grid_data)
+                if np.any(np.max(e[state_name][k_idxs]) > refine_results[phase_path]['max_rel_error_per_seg'][k]):
+                    refine_results[phase_path]['max_rel_error_per_seg'][k] = np.max(e[state_name][k_idxs])
+                    refine_results[phase_path]['error_state'] = state_name
+                    if refine_results[phase_path]['max_rel_error_per_seg'][k] > phase.refine_options['tolerance']:
+                        refine_results[phase_path]['need_refinement'][k] = True
 
-            e_accum = compute_error_quadratures(e, new_tx)
+            # For the current state, get the maximum error at each node in any index of the state shape
+            max_state_rel_err_at_each_node = np.max(e[state_name], axis=-1)
 
-            print(e_accum)
-            exit(0)
-
-
-
-            # if np.any(np.max(e[state_name][k_idxs]) > refine_results[phase_path]['max_rel_error'][k]):
-            #     refine_results[phase_path]['max_rel_error'][k] = np.max(e[state_name][k_idxs])
-            #     refine_results[phase_path]['error_state'] = state_name
-            #     if refine_results[phase_path]['max_rel_error'][k] > phase.refine_options['tolerance']:
-            #         refine_results[phase_path]['need_refinement'][k] = True
+            # Also store the maximum segment error per segment
+            np.maximum(refine_results[phase_path]['max_rel_error_per_node'],
+                       max_state_rel_err_at_each_node,
+                       out=refine_results[phase_path]['max_rel_error_per_node'])
 
     return refine_results

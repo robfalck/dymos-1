@@ -1,7 +1,9 @@
 from ...phase.phase import Phase
 
 import numpy as np
-
+from scipy.integrate import cumtrapz
+from scipy.interpolate import interp1d
+from dymos.transcriptions import Radau, GaussLobatto
 
 def split_segments(old_seg_ends, B):
     """
@@ -123,20 +125,81 @@ class HAdaptive:
         growth_limit = 1.2
         contraction_limit = 0.9
         e_desired = 1.0E-6
+        seg_reduction_limit = 5.0
 
         for phase_path, phase_refinement_results in refine_results.items():
             phase = self.phases[phase_path]
             tx = phase.options['transcription']
             gd = tx.grid_data
+            order = tx.options['order']
 
-            need_refine = phase_refinement_results['need_refinement']
-
-
-            if not phase.refine_options['refine'] or not np.any(need_refine):
-                refine_results[phase_path]['new_order'] = gd.transcription_order
-                refine_results[phase_path]['new_num_segments'] = gd.num_segments
-                refine_results[phase_path]['new_segment_ends'] = gd.segment_ends
+            # Instantiate a new phase as a copy of the old one, but first up the transcription order
+            # by 1 for Radau and by 2 for Gauss-Lobatto
+            new_num_segments = tx.options['num_segments']
+            new_segment_ends = tx.options['segment_ends']
+            new_compressed = tx.options['compressed']
+            if isinstance(tx, GaussLobatto):
+                new_order = tx.options['order'] + 2
+                new_tx = GaussLobatto(num_segments=new_num_segments, order=new_order,
+                                      segment_ends=new_segment_ends, compressed=new_compressed)
+            elif isinstance(tx, Radau):
+                new_order = tx.options['order'] + 1
+                new_tx = Radau(num_segments=new_num_segments, order=new_order,
+                               segment_ends=new_segment_ends, compressed=new_compressed)
+            else:
+                # Only refine GuassLobatto or Radau transcription phases
                 continue
+
+            max_rel_err_per_node = phase_refinement_results['max_rel_error_per_node']
+            max_rel_err_per_seg = phase_refinement_results['max_rel_error_per_seg']
+
+            # Compute the necessary segment lengths to achieve the right amount of error
+            seglen = np.diff(tx.grid_data.segment_ends)
+            new_seglen = seglen * (max_rel_err_per_seg / e_desired) ** (-1.0 / (order + 1))
+            sum_new_seglen = sum(new_seglen)
+
+            if sum_new_seglen < 2.0:
+                # Not enough segments, add some.
+                _add_new_segments()
+            elif sum_new_seglen >= seg_reduction_limit:
+                # There are too many segments, remove some.
+                _add_new_segments()
+            else:
+                _redistribute_segments()
+
+            print(sum(seglen))
+            print(sum(new_seglen))
+
+            exit(0)
+            # Change the number of segments
+
+            print(new_tx.grid_data.node_ptau.shape)
+            print(max_rel_err_per_node.shape)
+
+            e_accum = cumtrapz(max_rel_err_per_node, x=new_tx.grid_data.node_ptau, axis=0)
+            # prepend e_accume with zeros of the correct shape
+            print(e_accum)
+            e_accum = np.concatenate(([0], e_accum))
+
+            total_error = np.max(e_accum[-1])
+
+            print(e_accum.shape)
+
+            interpolant = interp1d(e_accum.ravel(), new_tx.grid_data.node_ptau)
+
+            error_breakpoints = np.linspace(0, total_error, new_tx.options['num_segments'] + 1)
+
+            new_segends = interpolant(error_breakpoints)
+
+            print(new_segends)
+
+
+
+            # if not phase.refine_options['refine'] or not np.any(need_refine):
+            #     refine_results[phase_path]['new_order'] = gd.transcription_order
+            #     refine_results[phase_path]['new_num_segments'] = gd.num_segments
+            #     refine_results[phase_path]['new_segment_ends'] = gd.segment_ends
+            #     continue
 
             # Refinement is needed
             gd = phase.options['transcription'].grid_data
@@ -145,7 +208,7 @@ class HAdaptive:
             refine_seg_idxs = np.where(need_refine)
             P = np.zeros(numseg)
 
-            max_rel_error = refine_results[phase_path]['max_rel_error'][refine_seg_idxs]
+            max_rel_error = refine_results[phase_path]['max_rel_error_per_seg'][refine_seg_idxs]
             tol = phase.refine_options['tolerance']
             order = gd.transcription_order[refine_seg_idxs]
 

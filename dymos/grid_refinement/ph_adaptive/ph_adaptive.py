@@ -95,7 +95,7 @@ class PHAdaptive:
             refine_seg_idxs = np.where(need_refine)
             P = np.zeros(numseg)
 
-            max_rel_error = refine_results[phase_path]['max_rel_error'][refine_seg_idxs]
+            max_rel_error = refine_results[phase_path]['max_rel_error_per_seg'][refine_seg_idxs]
             tol = phase.refine_options['tolerance']
             order = gd.transcription_order[refine_seg_idxs]
 

@@ -48,7 +48,7 @@ def write_error(f, iter_number, phases, refine_results):
         str_segorders = ', '.join(str(elem) for elem in refine_data['order'])
         print(f'            Segment Order = [{str_segorders}]', file=f)
 
-        error = refine_data['max_rel_error']
+        error = refine_data['max_rel_error_per_seg']
         str_errors = ', '.join(f'{elem:8.4g}' for elem in error)
         print(f'            Error = [{str_errors}]', file=f)
 

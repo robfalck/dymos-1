@@ -127,7 +127,7 @@ class HPAdaptive:
             gd = tx.grid_data
             self.gd[phase_path] = gd
             self.x_dd[phase_path] = {}
-            self.error[phase_path] = refine_results[phase_path]['max_rel_error']
+            self.error[phase_path] = refine_results[phase_path]['max_rel_error_per_seg']
 
             # Get information about current grid
             num_scalar_states = 0
@@ -316,7 +316,7 @@ class HPAdaptive:
         x_dd = {}
         for phase_path, phase_refinement_results in refine_results.items():
             phase = self.phases[phase_path]
-            self.error[phase_path] = refine_results[phase_path]['max_rel_error']
+            self.error[phase_path] = refine_results[phase_path]['max_rel_error_per_seg']
             tx = phase.options['transcription']
             gd = tx.grid_data
 

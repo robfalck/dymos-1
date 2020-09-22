@@ -266,12 +266,18 @@ class TestRunProblem(unittest.TestCase):
             p.driver.opt_settings['hessian_approximation'] = 'limited-memory'
             # p.driver.opt_settings['nlp_scaling_method'] = 'user-scaling'
             p.driver.opt_settings['print_level'] = 5
-            p.driver.opt_settings['max_iter'] = 200
+            p.driver.opt_settings['max_iter'] = 1000
             p.driver.opt_settings['linear_solver'] = 'mumps'
+
+ #        segends = [-1.,         -0.96356538, -0.92966212, -0.9053732,  -0.88425087, -0.85390926,
+ # -0.79404159, -0.75530507, -0.63294546,  0.74589612,  0.8296802,   0.88192258,
+ #  0.92031225,  0.95296172,  0.97615188,  1.        ]
+
+        segends = None
 
         traj = p.model.add_subsystem('traj', dm.Trajectory())
         phase0 = traj.add_phase('phase0', dm.Phase(ode_class=HyperSensitiveODE,
-                                                   transcription=dm.Radau(num_segments=30, order=3)))
+                                                   transcription=dm.Radau(num_segments=25, order=3, segment_ends=segends)))
         phase0.set_time_options(fix_initial=True, fix_duration=True)
         phase0.add_state('x', fix_initial=True, fix_final=False, rate_source='x_dot', targets=['x'])
         phase0.add_state('xL', fix_initial=True, fix_final=False, rate_source='L', targets=['xL'])
