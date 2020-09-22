@@ -124,31 +124,16 @@ class HAdaptive:
         """
         growth_limit = 1.2
         contraction_limit = 0.9
+        max_new_segs = 3
         e_desired = 1.0E-6
-        seg_reduction_limit = 5.0
 
         for phase_path, phase_refinement_results in refine_results.items():
             phase = self.phases[phase_path]
             tx = phase.options['transcription']
             gd = tx.grid_data
-            order = tx.options['order']
 
-            # Instantiate a new phase as a copy of the old one, but first up the transcription order
-            # by 1 for Radau and by 2 for Gauss-Lobatto
-            new_num_segments = tx.options['num_segments']
-            new_segment_ends = tx.options['segment_ends']
-            new_compressed = tx.options['compressed']
-            if isinstance(tx, GaussLobatto):
-                new_order = tx.options['order'] + 2
-                new_tx = GaussLobatto(num_segments=new_num_segments, order=new_order,
-                                      segment_ends=new_segment_ends, compressed=new_compressed)
-            elif isinstance(tx, Radau):
-                new_order = tx.options['order'] + 1
-                new_tx = Radau(num_segments=new_num_segments, order=new_order,
-                               segment_ends=new_segment_ends, compressed=new_compressed)
-            else:
-                # Only refine GuassLobatto or Radau transcription phases
-                continue
+            order = tx.options['order']
+            numseg = gd.num_segments
 
             max_rel_err_per_node = phase_refinement_results['max_rel_error_per_node']
             max_rel_err_per_seg = phase_refinement_results['max_rel_error_per_seg']
@@ -158,14 +143,45 @@ class HAdaptive:
             new_seglen = seglen * (max_rel_err_per_seg / e_desired) ** (-1.0 / (order + 1))
             sum_new_seglen = sum(new_seglen)
 
+            # Cap the addition or removal of segments
+            new_numseg = int(max(numseg * 2.0 / sum_new_seglen, numseg * contraction_limit))
+            new_numseg = min(new_numseg, numseg + max_new_segs)
+
+            if new_numseg != numseg:
+                # Add/remove segments
+                e_accum = cumtrapz(max_rel_err_per_node, x=new_tx.grid_data.node_ptau,
+                                   axis=0, initial=0)
+                interpolant = interp1d(e_accum.ravel(), new_tx.grid_data.node_ptau)
+                error_breakpoints = np.linspace(0, e_accum[-1], new_numseg + 1)
+                new_segends = interpolant(error_breakpoints)
+            else:
+                # Redistribute existing segments
+
             if sum_new_seglen < 2.0:
                 # Not enough segments, add some.
+                new_numseg = int(numseg * 2.0 / sum_new_seglen)
+
+                # If the number of segments
+                if new_numseg < int(numseg * contraction_limit):
+                    new_numseg =
+
+                IF(segsum.LT.grdtst)
+                nsegn(nphase) = INT(DFLOAT(nseg
+                                           + (nphase)) * 2.
+                D0 / segsum)+1
+            IF(nsegn(nphase).LT.INT(DFLOAT(nseg(nphase)) * segsafe(nphase)))
+            x
+            nsegn(nphase) = INT(DFLOAT(nseg(nphase)) * segsafe(nphase))
+            IF(nsegn(nphase).GT.(nseg(nphase) + maxnn(nphase)))
+            nsegn
+        +         (nphase) = nseg(nphase) + maxnn(nphase)
+
                 _add_new_segments()
             elif sum_new_seglen >= seg_reduction_limit:
                 # There are too many segments, remove some.
                 _add_new_segments()
             else:
-                _redistribute_segments()
+
 
             print(sum(seglen))
             print(sum(new_seglen))
@@ -181,13 +197,13 @@ class HAdaptive:
             print(e_accum)
             e_accum = np.concatenate(([0], e_accum))
 
-            total_error = np.max(e_accum[-1])
+            final_error = np.max(e_accum[-1])
 
             print(e_accum.shape)
 
             interpolant = interp1d(e_accum.ravel(), new_tx.grid_data.node_ptau)
 
-            error_breakpoints = np.linspace(0, total_error, new_tx.options['num_segments'] + 1)
+            error_breakpoints = np.linspace(0, final_error, new_tx.options['num_segments'] + 1)
 
             new_segends = interpolant(error_breakpoints)
 
