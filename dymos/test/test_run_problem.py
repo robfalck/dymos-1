@@ -12,7 +12,7 @@ from dymos.examples.hyper_sensitive.hyper_sensitive_ode import HyperSensitiveODE
 from dymos.examples.brachistochrone.brachistochrone_ode import BrachistochroneODE
 
 
-@use_tempdirs
+# @use_tempdirs
 class TestRunProblem(unittest.TestCase):
 
     def tearDown(self):
@@ -24,7 +24,7 @@ class TestRunProblem(unittest.TestCase):
     def test_run_HS_problem_radau(self):
         p = om.Problem(model=om.Group())
         p.driver = om.pyOptSparseDriver()
-        p.driver.declare_coloring()
+        p.driver.declare_coloring(tol=1.0E-15)
         optimizer = 'IPOPT'
         p.driver.options['optimizer'] = optimizer
 
@@ -32,6 +32,7 @@ class TestRunProblem(unittest.TestCase):
             p.driver.opt_settings['Major iterations limit'] = 200
             p.driver.opt_settings['Major feasibility tolerance'] = 1.0E-6
             p.driver.opt_settings['Major optimality tolerance'] = 1.0E-6
+            p.driver.opt_settings['iSumm'] = 6
         elif optimizer == 'IPOPT':
             p.driver.opt_settings['hessian_approximation'] = 'limited-memory'
             # p.driver.opt_settings['nlp_scaling_method'] = 'user-scaling'
@@ -256,13 +257,14 @@ class TestRunProblem(unittest.TestCase):
         p = om.Problem(model=om.Group())
         p.driver = om.pyOptSparseDriver()
         p.driver.declare_coloring()
-        optimizer = 'IPOPT'
+        optimizer = 'SNOPT'
         p.driver.options['optimizer'] = optimizer
 
         if optimizer == 'SNOPT':
             p.driver.opt_settings['Major iterations limit'] = 200
             p.driver.opt_settings['Major feasibility tolerance'] = 1.0E-6
             p.driver.opt_settings['Major optimality tolerance'] = 1.0E-6
+            p.driver.opt_settings['iSumm'] = 6
         elif optimizer == 'IPOPT':
             p.driver.opt_settings['hessian_approximation'] = 'limited-memory'
             # p.driver.opt_settings['nlp_scaling_method'] = 'user-scaling'
@@ -278,7 +280,7 @@ class TestRunProblem(unittest.TestCase):
 
         traj = p.model.add_subsystem('traj', dm.Trajectory())
         phase0 = traj.add_phase('phase0', dm.Phase(ode_class=HyperSensitiveODE,
-                                                   transcription=dm.Radau(num_segments=25, order=3, segment_ends=segends)))
+                                                   transcription=dm.Radau(num_segments=15, order=3, segment_ends=segends)))
         phase0.set_time_options(fix_initial=True, fix_duration=True)
         phase0.add_state('x', fix_initial=True, fix_final=False, rate_source='x_dot', targets=['x'])
         phase0.add_state('xL', fix_initial=True, fix_final=False, rate_source='L', targets=['xL'])
@@ -301,6 +303,10 @@ class TestRunProblem(unittest.TestCase):
         p.set_val('traj.phase0.controls:u', phase0.interpolate(ys=[-0.6, 2.4],
                                                                nodes='control_input'))
         dm.run_problem(p, True, refine_method='h', refine_iteration_limit=10)
+
+        import matplotlib.pyplot as plt
+        plt.plot(p.get_val('traj.phase0.timeseries.time'), p.get_val('traj.phase0.timeseries.states:x'), 'r.-')
+        plt.show()
 
         sqrt_two = np.sqrt(2)
         val = sqrt_two * tf

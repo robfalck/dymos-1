@@ -359,6 +359,7 @@ def check_error(phases):
             continue
 
         refine_results[phase_path]['max_rel_error_per_node'] = np.zeros(new_tx.grid_data.num_nodes, dtype=float)
+        refine_results[phase_path]['error_nodes_ptau'] = new_tx.grid_data.node_ptau
 
         # Let x be the interpolated states on the new transcription
         # Let f by the evaluated state rates given the interpolation of the states and controls

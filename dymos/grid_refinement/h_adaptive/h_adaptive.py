@@ -124,7 +124,7 @@ class HAdaptive:
         """
         growth_limit = 1.2
         contraction_limit = 0.9
-        max_new_segs = 3
+        max_new_segs = 10
         e_desired = 1.0E-6
 
         for phase_path, phase_refinement_results in refine_results.items():
@@ -149,113 +149,23 @@ class HAdaptive:
 
             if new_numseg != numseg:
                 # Add/remove segments
-                e_accum = cumtrapz(max_rel_err_per_node, x=new_tx.grid_data.node_ptau,
+                e_accum = cumtrapz(max_rel_err_per_node, x=refine_results[phase_path]['error_nodes_ptau'],
                                    axis=0, initial=0)
-                interpolant = interp1d(e_accum.ravel(), new_tx.grid_data.node_ptau)
+                interpolant = interp1d(e_accum, refine_results[phase_path]['error_nodes_ptau'])
                 error_breakpoints = np.linspace(0, e_accum[-1], new_numseg + 1)
                 new_segends = interpolant(error_breakpoints)
             else:
                 # Redistribute existing segments
+                seglen_ratio = new_seglen / seglen
 
-            if sum_new_seglen < 2.0:
-                # Not enough segments, add some.
-                new_numseg = int(numseg * 2.0 / sum_new_seglen)
+                new_seglen = np.where(seglen_ratio >= contraction_limit, new_seglen, contraction_limit)
+                new_seglen = np.where(seglen_ratio <= growth_limit, new_seglen, growth_limit)
 
-                # If the number of segments
-                if new_numseg < int(numseg * contraction_limit):
-                    new_numseg =
+            refine_results[phase_path]['new_num_segments'] = new_numseg
+            refine_results[phase_path]['new_order'] = order * np.ones(new_numseg, dtype=int)
+            refine_results[phase_path]['new_segment_ends'] = new_segends
 
-                IF(segsum.LT.grdtst)
-                nsegn(nphase) = INT(DFLOAT(nseg
-                                           + (nphase)) * 2.
-                D0 / segsum)+1
-            IF(nsegn(nphase).LT.INT(DFLOAT(nseg(nphase)) * segsafe(nphase)))
-            x
-            nsegn(nphase) = INT(DFLOAT(nseg(nphase)) * segsafe(nphase))
-            IF(nsegn(nphase).GT.(nseg(nphase) + maxnn(nphase)))
-            nsegn
-        +         (nphase) = nseg(nphase) + maxnn(nphase)
-
-                _add_new_segments()
-            elif sum_new_seglen >= seg_reduction_limit:
-                # There are too many segments, remove some.
-                _add_new_segments()
-            else:
-
-
-            print(sum(seglen))
-            print(sum(new_seglen))
-
-            exit(0)
-            # Change the number of segments
-
-            print(new_tx.grid_data.node_ptau.shape)
-            print(max_rel_err_per_node.shape)
-
-            e_accum = cumtrapz(max_rel_err_per_node, x=new_tx.grid_data.node_ptau, axis=0)
-            # prepend e_accume with zeros of the correct shape
-            print(e_accum)
-            e_accum = np.concatenate(([0], e_accum))
-
-            final_error = np.max(e_accum[-1])
-
-            print(e_accum.shape)
-
-            interpolant = interp1d(e_accum.ravel(), new_tx.grid_data.node_ptau)
-
-            error_breakpoints = np.linspace(0, final_error, new_tx.options['num_segments'] + 1)
-
-            new_segends = interpolant(error_breakpoints)
-
-            print(new_segends)
-
-
-
-            # if not phase.refine_options['refine'] or not np.any(need_refine):
-            #     refine_results[phase_path]['new_order'] = gd.transcription_order
-            #     refine_results[phase_path]['new_num_segments'] = gd.num_segments
-            #     refine_results[phase_path]['new_segment_ends'] = gd.segment_ends
-            #     continue
-
-            # Refinement is needed
-            gd = phase.options['transcription'].grid_data
-            numseg = gd.num_segments
-
-            refine_seg_idxs = np.where(need_refine)
-            P = np.zeros(numseg)
-
-            max_rel_error = refine_results[phase_path]['max_rel_error_per_seg'][refine_seg_idxs]
-            tol = phase.refine_options['tolerance']
-            order = gd.transcription_order[refine_seg_idxs]
-
-            P[refine_seg_idxs] = np.log(max_rel_error / tol) / np.log(order)
-            P = np.ceil(P).astype(int)
-
-            if gd.transcription == 'gauss-lobatto':
-                odd_idxs = np.where(P % 2 != 0)
-                P[odd_idxs] += 1
-
-            new_order = gd.transcription_order + P
-            B = np.ones(numseg, dtype=int)
-
-            raise_order_idxs = np.where(gd.transcription_order + P <= phase.refine_options['max_order'])
-            split_seg_idxs = np.where(gd.transcription_order + P > phase.refine_options['max_order'])
-
-            new_order[raise_order_idxs] = gd.transcription_order[raise_order_idxs] + P[raise_order_idxs]
-            new_order[split_seg_idxs] = phase.refine_options['min_order']
-
-            B[split_seg_idxs] = np.around((gd.transcription_order[split_seg_idxs] +
-                                           P[split_seg_idxs]) / phase.refine_options['min_order']).astype(int)
-
-            new_order = np.repeat(new_order, repeats=B)
-            new_num_segments = int(np.sum(B))
-            new_segment_ends = split_segments(gd.segment_ends, B)
-
-            refine_results[phase_path]['new_order'] = new_order
-            refine_results[phase_path]['new_num_segments'] = new_num_segments
-            refine_results[phase_path]['new_segment_ends'] = new_segment_ends
-
-            tx.options['order'] = new_order
-            tx.options['num_segments'] = new_num_segments
-            tx.options['segment_ends'] = new_segment_ends
+            tx.options['order'] = order
+            tx.options['num_segments'] = new_numseg
+            tx.options['segment_ends'] = new_segends
             tx.init_grid()
