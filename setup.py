@@ -29,11 +29,11 @@ optional_dependencies['all'] = sorted([
 
 
 setup(name='dymos',
-    version='0.16.0-dev',
+    version='0.16.1-dev',
     description='Open-Source Optimization of Dynamic Multidisciplinary Systems',
     url='https://github.com/OpenMDAO/dymos',
     classifiers=[
-        'Development Status :: 2 - Pre-Alpha',
+        'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: Apache 2.0',
         'Natural Language :: English',

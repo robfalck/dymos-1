@@ -1,14 +1,23 @@
 import unittest
 
+import openmdao
 import matplotlib.pyplot as plt
 plt.switch_backend('Agg')
+
 from openmdao.utils.testing_utils import use_tempdirs
+
+om_dev_version = openmdao.__version__.endswith('dev')
+om_version = tuple(int(s) for s in openmdao.__version__.split('-')[0].split('.'))
 
 
 @use_tempdirs
-class TestTwoPhaseCannonballODEOutputLinkage(unittest.TestCase):
+class TestConnectControlToParameter(unittest.TestCase):
 
-    def test_two_phase_cannonball_ode_output_linkage(self):
+    @unittest.skipIf(om_version < (3, 4, 1) or (om_version == (3, 4, 1) and om_dev_version),
+                     'test requires OpenMDAO >= 3.4.1')
+    def test_connect_control_to_parameter(self):
+        """ Test that the final value of a control in one phase can be connected as the value
+        of a parameter in a subsequent phase. """
         import openmdao.api as om
         from openmdao.utils.assert_utils import assert_near_equal
 
@@ -49,6 +58,8 @@ class TestTwoPhaseCannonballODEOutputLinkage(unittest.TestCase):
         ascent.add_parameter('S', targets=['aero.S'], units='m**2')
         ascent.add_parameter('mass', targets=['eom.m', 'kinetic_energy.m'], units='kg')
 
+        ascent.add_control('CD', targets=['aero.CD'], opt=False, val=0.05)
+
         # Limit the muzzle energy
         ascent.add_boundary_constraint('kinetic_energy.ke', loc='initial', units='J',
                                        upper=400000, lower=0, ref=100000, shape=(1,))
@@ -70,13 +81,11 @@ class TestTwoPhaseCannonballODEOutputLinkage(unittest.TestCase):
 
         descent.add_parameter('S', targets=['aero.S'], units='m**2')
         descent.add_parameter('mass', targets=['eom.m', 'kinetic_energy.m'], units='kg')
+        descent.add_parameter('CD', targets=['aero.CD'], val=0.01)
 
         descent.add_objective('r', loc='final', scaler=-1.0)
 
         # Add internally-managed design parameters to the trajectory.
-        traj.add_parameter('CD',
-                           targets={'ascent': ['aero.CD'], 'descent': ['aero.CD']},
-                           val=0.5, units=None, opt=False)
         traj.add_parameter('CL',
                            targets={'ascent': ['aero.CL'], 'descent': ['aero.CL']},
                            val=0.0, units=None, opt=False)
@@ -97,12 +106,7 @@ class TestTwoPhaseCannonballODEOutputLinkage(unittest.TestCase):
         traj.add_parameter('S', units='m**2', val=0.005)
 
         # Link Phases (link time and all state variables)
-        # Note velocity is not included here.  Doing so is equivalent to linking kinetic energy,
-        # and causes a duplicate row in the constraint jacobian.
-        traj.link_phases(phases=['ascent', 'descent'], vars=['time', 'r', 'h', 'gam'], connected=True)
-
-        traj.add_linkage_constraint('ascent', 'descent', 'kinetic_energy.ke', 'kinetic_energy.ke',
-                                    ref=100000, connected=False)
+        traj.link_phases(phases=['ascent', 'descent'], vars=['*'])
 
         # Issue Connections
         p.model.connect('external_params.radius', 'size_comp.radius')
@@ -111,18 +115,19 @@ class TestTwoPhaseCannonballODEOutputLinkage(unittest.TestCase):
         p.model.connect('size_comp.mass', 'traj.parameters:m')
         p.model.connect('size_comp.S', 'traj.parameters:S')
 
-        # Finish Problem Setup
+        traj.connect('ascent.timeseries.controls:CD', 'descent.parameters:CD', src_indices=[-1])
+
+        # A linear solver at the top level can improve performance.
         p.model.linear_solver = om.DirectSolver()
 
-        p.driver.add_recorder(om.SqliteRecorder('ex_two_phase_cannonball.db'))
-
+        # Finish Problem Setup
         p.setup()
 
         # Set Initial Guesses
         p.set_val('external_params.radius', 0.05, units='m')
         p.set_val('external_params.dens', 7.87, units='g/cm**3')
 
-        p.set_val('traj.parameters:CD', 0.5)
+        p.set_val('traj.ascent.controls:CD', 0.5)
         p.set_val('traj.parameters:CL', 0.0)
         p.set_val('traj.parameters:T', 0.0)
 
@@ -144,90 +149,11 @@ class TestTwoPhaseCannonballODEOutputLinkage(unittest.TestCase):
         p.set_val('traj.descent.states:gam', descent.interpolate(ys=[0, -45], nodes='state_input'),
                   units='deg')
 
-        dm.run_problem(p)
+        dm.run_problem(p, simulate=True)
 
-        assert_near_equal(p.get_val('traj.descent.states:r')[-1],
-                          3183.25, tolerance=1.0E-2)
-
-        exp_out = traj.simulate()
-
-        print('optimal radius: {0:6.4f} m '.format(p.get_val('external_params.radius',
-                                                             units='m')[0]))
-        print('cannonball mass: {0:6.4f} kg '.format(p.get_val('size_comp.mass',
-                                                               units='kg')[0]))
-        print('launch angle: {0:6.4f} '
-              'deg '.format(p.get_val('traj.ascent.timeseries.states:gam',  units='deg')[0, 0]))
-        print('maximum range: {0:6.4f} '
-              'm '.format(p.get_val('traj.descent.timeseries.states:r')[-1, 0]))
-
-        fig, axes = plt.subplots(nrows=1, ncols=1, figsize=(10, 6))
-
-        time_imp = {'ascent': p.get_val('traj.ascent.timeseries.time'),
-                    'descent': p.get_val('traj.descent.timeseries.time')}
-
-        time_exp = {'ascent': exp_out.get_val('traj.ascent.timeseries.time'),
-                    'descent': exp_out.get_val('traj.descent.timeseries.time')}
-
-        r_imp = {'ascent': p.get_val('traj.ascent.timeseries.states:r'),
-                 'descent': p.get_val('traj.descent.timeseries.states:r')}
-
-        r_exp = {'ascent': exp_out.get_val('traj.ascent.timeseries.states:r'),
-                 'descent': exp_out.get_val('traj.descent.timeseries.states:r')}
-
-        h_imp = {'ascent': p.get_val('traj.ascent.timeseries.states:h'),
-                 'descent': p.get_val('traj.descent.timeseries.states:h')}
-
-        h_exp = {'ascent': exp_out.get_val('traj.ascent.timeseries.states:h'),
-                 'descent': exp_out.get_val('traj.descent.timeseries.states:h')}
-
-        axes.plot(r_imp['ascent'], h_imp['ascent'], 'bo')
-
-        axes.plot(r_imp['descent'], h_imp['descent'], 'ro')
-
-        axes.plot(r_exp['ascent'], h_exp['ascent'], 'b--')
-
-        axes.plot(r_exp['descent'], h_exp['descent'], 'r--')
-
-        axes.set_xlabel('range (m)')
-        axes.set_ylabel('altitude (m)')
-
-        fig, axes = plt.subplots(nrows=4, ncols=1, figsize=(10, 6))
-        states = ['r', 'h', 'v', 'gam']
-        for i, state in enumerate(states):
-            x_imp = {'ascent': p.get_val('traj.ascent.timeseries.states:{0}'.format(state)),
-                     'descent': p.get_val('traj.descent.timeseries.states:{0}'.format(state))}
-
-            x_exp = {'ascent': exp_out.get_val('traj.ascent.timeseries.states:{0}'.format(state)),
-                     'descent': exp_out.get_val('traj.descent.timeseries.states:{0}'.format(state))}
-
-            axes[i].set_ylabel(state)
-
-            axes[i].plot(time_imp['ascent'], x_imp['ascent'], 'bo')
-            axes[i].plot(time_imp['descent'], x_imp['descent'], 'ro')
-            axes[i].plot(time_exp['ascent'], x_exp['ascent'], 'b--')
-            axes[i].plot(time_exp['descent'], x_exp['descent'], 'r--')
-
-        params = ['CL', 'CD', 'T', 'alpha', 'mass', 'S']
-        fig, axes = plt.subplots(nrows=6, ncols=1, figsize=(12, 6))
-        for i, param in enumerate(params):
-            p_imp = {
-                'ascent': p.get_val('traj.ascent.timeseries.parameters:{0}'.format(param)),
-                'descent': p.get_val('traj.descent.timeseries.parameters:{0}'.format(param))}
-
-            p_exp = {'ascent': exp_out.get_val('traj.ascent.timeseries.'
-                                               'parameters:{0}'.format(param)),
-                     'descent': exp_out.get_val('traj.descent.timeseries.'
-                                                'parameters:{0}'.format(param))}
-
-            axes[i].set_ylabel(param)
-
-            axes[i].plot(time_imp['ascent'], p_imp['ascent'], 'bo')
-            axes[i].plot(time_imp['descent'], p_imp['descent'], 'ro')
-            axes[i].plot(time_exp['ascent'], p_exp['ascent'], 'b--')
-            axes[i].plot(time_exp['descent'], p_exp['descent'], 'r--')
-
-        plt.show()
-
+        assert_near_equal(p.get_val('traj.descent.states:r')[-1], 3183.25, tolerance=1.0E-2)
+        assert_near_equal(p.get_val('traj.ascent.timeseries.controls:CD')[-1],
+                          p.get_val('traj.descent.timeseries.parameters:CD')[0])
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
