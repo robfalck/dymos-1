@@ -908,7 +908,7 @@ class Phase(om.Group):
         if shape is not _unspecified:
             self.parameter_options[name]['shape'] = shape
         elif val is not _unspecified:
-            if isinstance(val, float):
+            if isinstance(val, float) or isinstance(val, int) or isinstance(val, complex):
                 self.parameter_options[name]['shape'] = (1,)
             else:
                 self.parameter_options[name]['shape'] = np.asarray(val).shape
