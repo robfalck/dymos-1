@@ -1,3 +1,7 @@
+"""Defines the Trajectory class for Dymos."""
+
+__all__ = ['Trajectory']
+
 from collections import OrderedDict
 from collections.abc import Sequence
 from copy import deepcopy
@@ -20,14 +24,23 @@ from .options import LinkageOptionsDictionary
 from .phase_linkage_comp import PhaseLinkageComp
 from ..phase.options import TrajParameterOptionsDictionary
 from ..utils.misc import get_rate_units, get_source_metadata, _unspecified
-from ..utils.indexing import get_src_indices_by_row
 
 
 class Trajectory(om.Group):
     """
-    A Trajectory object serves as a container for one or more Phases, as well as the linkage
-    conditions between phases.
+    A Trajectory object serves as a container for one or more Phases.
+
+    Trajectory objects in Dymos are a special OpenMDAO group which hold one or more Phase objects
+    in the phases subgroup.  A PhaseLinkageComp (the linkages subsystem) provides linkage constraints
+    between various Phases of the Trajectory.
+
+    Attributes
+    ----------
+    parameter_options : dict
+        A dictionary, keyed by parameter name, which holds the TrajectoryParameterOptionsDictionary
+        for each parameter in the Trajectory.
     """
+
     def __init__(self, **kwargs):
         super(Trajectory, self).__init__(**kwargs)
 
@@ -37,9 +50,7 @@ class Trajectory(om.Group):
         self._phase_add_kwargs = {}
 
     def initialize(self):
-        """
-        Declare any options for Trajectory.
-        """
+        """Declare any options for Trajectory."""
         self.options.declare('sim_mode', types=bool, default=False,
                              desc='Used internally by Dymos when invoking simulate on a trajectory')
 
@@ -261,8 +272,11 @@ class Trajectory(om.Group):
 
     def _setup_parameters(self):
         """
-        Adds an IndepVarComp if necessary and issues appropriate connections based
-        on transcription.
+        Handles setup tasks for the parameters in the Trajectory.
+
+        Parameters are treated as unconnected inputs, and sourced from an 'autoIVC' unless explicitly
+        connected to.  If option 'opt' is True for a Parameter, it is added as a design variable.
+        Calls add_parameter on each Phase in which the parameter is relevant.
         """
         if self.parameter_options:
             for name, options in self.parameter_options.items():
@@ -271,7 +285,7 @@ class Trajectory(om.Group):
                     lb = -INF_BOUND if options['lower'] is None else options['lower']
                     ub = INF_BOUND if options['upper'] is None else options['upper']
 
-                    self.add_design_var(name='parameters:{0}'.format(name),
+                    self.add_design_var(name=f'parameters:{name}',
                                         lower=lb,
                                         upper=ub,
                                         scaler=options['scaler'],
@@ -341,9 +355,7 @@ class Trajectory(om.Group):
             self.add_subsystem('linkages', PhaseLinkageComp())
 
     def setup(self):
-        """
-        Setup the Trajectory Group.
-        """
+        """Setup the Trajectory Group."""
         super(Trajectory, self).setup()
 
         if self.parameter_options:
@@ -360,10 +372,7 @@ class Trajectory(om.Group):
             self._setup_linkages()
 
     def _configure_parameters(self):
-        """
-        Configure connections from input or design parameters to the appropriate targets
-        in each phase.
-        """
+        """Configure promotion of parameter targets in each Phase."""
         parameter_options = self.parameter_options
         promoted_inputs = []
 
@@ -409,9 +418,9 @@ class Trajectory(om.Group):
         return promoted_inputs
 
     def _configure_phase_options_dicts(self):
-        """
-        Called during configure if we are under MPI. Loops over all phases and broacasts the shape
-        and units options to all procs for all dymos variables.
+        """Loops over all phases and broadcasts the shape and units options to all procs for all dymos variables.
+
+        Called during configure if we are under MPI.
         """
         for name, phase in self._phases.items():
             all_dicts = [phase.state_options, phase.control_options, phase.parameter_options,
@@ -437,9 +446,7 @@ class Trajectory(om.Group):
                         raise RuntimeError('Unexpectedly found no valid units.')
 
     def _update_linkage_options_configure(self, linkage_options):
-        """
-        Called during configure to return the source paths, units, and shapes of variables
-        in linkages.
+        """ Configuration helper to update the source paths, units, and shapes of variables in linkages.
 
         Parameters
         ----------
@@ -449,10 +456,6 @@ class Trajectory(om.Group):
             The paths of the variables involved in the linkage.
         options : dict
             The linkage options set during `add_linkage_constraint`.
-
-        Returns
-        -------
-
         """
         phase_name_a = linkage_options['phase_a']
         phase_name_b = linkage_options['phase_b']
