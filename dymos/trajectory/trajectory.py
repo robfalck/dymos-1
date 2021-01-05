@@ -371,13 +371,11 @@ class Trajectory(om.Group):
             prom_name = f'parameters:{name}'
             targets = options['targets']
 
-            val = options['val']
-            _shape = options['shape']
-            shaped_val = np.broadcast_to(val, _shape)
-
-            self.set_input_defaults(name=prom_name,
-                                    val=shaped_val,
-                                    units=options['units'])
+            # For each phase, use introspection to get the units and shape.
+            # If units do not match across all phases, require user to set them.
+            # If shapes do not match across all phases, this is an error.
+            tgt_units = {}
+            tgt_shapes = {}
 
             for phase_name, phs in self._phases.items():
 
@@ -386,6 +384,8 @@ class Trajectory(om.Group):
                     # it exists.
                     if name in phs.parameter_options:
                         tgt = f'{phase_name}.parameters:{name}'
+                        tgt_shapes[phs.name] = phs.parameter_options[name]['shape']
+                        tgt_units[phs.name] = phs.parameter_options[name]['units']
                     else:
                         continue
                 elif targets[phase_name] is None:
@@ -395,17 +395,44 @@ class Trajectory(om.Group):
                         targets[phase_name] in phs.parameter_options:
                     # Connect to an input parameter with a different name in this phase
                     tgt = '{0}.parameters:{1}'.format(phase_name, targets[phase_name])
+                    tgt_shapes[phs.name] = phs.parameter_options[targets[phase_name]]['shape']
+                    tgt_units[phs.name] = phs.parameter_options[targets[phase_name]]['units']
                 elif isinstance(targets[phase_name], Sequence) and \
                         name in phs.parameter_options:
                     # User gave a list of ODE targets which were passed to the creation of a
                     # new input parameter in setup, just connect to that new input parameter
                     tgt = f'{phase_name}.parameters:{name}'
+                    tgt_shapes[phs.name] = phs.parameter_options[name]['shape']
+                    tgt_units[phs.name] = phs.parameter_options[name]['units']
                 else:
                     raise ValueError(f'Unhandled parameter target in '
                                      f'phase {phase_name}')
 
                 promoted_inputs.append(tgt)
                 self.promotes('phases', inputs=[(tgt, prom_name)])
+
+            if len(set(tgt_shapes.values())) == 1:
+                options['shape'] = next(iter(tgt_shapes.values()))
+            else:
+                raise ValueError(f'Parameter {name} in Trajectory {self.pathname} is connected to '
+                                 f'targets in multiple phases that have different shapes.')
+
+            if len(set(tgt_units.values())) != 1:
+                options['units'] = next(iter(tgt_units))
+            else:
+                ValueError(f'Parameter {name} in Trajectory {self.pathname} is connected to '
+                           f'targets in multiple phases that have different units. You must '
+                           f'explicitly provide units for the parameter since they cannot be '
+                           f'inferred.')
+
+            val = options['val']
+            _shape = options['shape']
+            shaped_val = np.broadcast_to(val, _shape)
+
+            self.set_input_defaults(name=prom_name,
+                                    val=shaped_val,
+                                    units=options['units'])
+
         return promoted_inputs
 
     def _configure_phase_options_dicts(self):
@@ -477,7 +504,6 @@ class Trajectory(om.Group):
         shapes = {'a': _unspecified, 'b': _unspecified}
 
         for i in ('a', 'b'):
-
             if classes[i] == 'time':
                 sources[i] = 'timeseries.time'
                 shapes[i] = (1,)
@@ -498,7 +524,7 @@ class Trajectory(om.Group):
                 sources[i] = f'timeseries.control_rates:{vars[i]}'
                 control_name = vars[i][:-5] if classes[i] == 'control_rate' else vars[i][:-6]
                 units[i] = phases[i].control_options[control_name]['units']
-                deriv = 1 if classes[i] == 'control_rate' else 2
+                deriv = 1 if classes[i].endswith('rate') else 2
                 units[i] = get_rate_units(units[i], phases[i].time_options['units'], deriv=deriv)
                 shapes[i] = phases[i].control_options[control_name]['shape']
             elif classes[i] in {'indep_polynomial_control', 'input_polynomial_control'}:
@@ -510,7 +536,7 @@ class Trajectory(om.Group):
                 control_name = vars[i][:-5] if classes[i] == 'polynomial_control_rate' else vars[i][:-6]
                 control_units = phases[i].polynomial_control_options[control_name]['units']
                 time_units = phases[i].time_options['units']
-                deriv = 1 if classes[i] == 'control_rate' else 2
+                deriv = 1 if classes[i].endswith('rate') else 2
                 units[i] = get_rate_units(control_units, time_units, deriv=deriv)
                 shapes[i] = phases[i].polynomial_control_options[control_name]['shape']
             elif classes[i] == 'parameter':
@@ -524,7 +550,7 @@ class Trajectory(om.Group):
                     shapes[i], units[i] = get_source_metadata(phases[i]._get_subsystem(rhs_source),
                                                               vars[i], user_units=units[i],
                                                               user_shape=_unspecified)
-                except ValueError as e:
+                except ValueError:
                     raise ValueError(f'{info_str}: Unable to find variable \'{vars[i]}\' in '
                                      f'phase \'{phases[i].pathname}\' or its ODE.')
 
@@ -711,6 +737,7 @@ class Trajectory(om.Group):
         phase_a : str
             The first phase in the linkage constraint.
         phase_b : str
+            The second phase in the linkage constraint.
         var_a : str
             The linked variable from the first phase in the linkage constraint.
         var_b : str
@@ -790,8 +817,7 @@ class Trajectory(om.Group):
 
     def link_phases(self, phases, vars=None, locs=('final', 'initial'), connected=False):
         """
-        Specifies that phases in the given sequence are to be assume continuity of the given
-        variables.
+        Specify that phases in the given sequence are to be assume continuity of the given variables.
 
         This method caches the phase linkages, and may be called multiple times to express more
         complex behavior (branching phases, phases only continuous in some variables, etc).
@@ -809,21 +835,19 @@ class Trajectory(om.Group):
         vars : sequence of str
             The variables in the phases to be linked, or '*'.  Providing '*' will time and all
             states.  Linking control values or rates requires them to be listed explicitly.
-        locs : tuple of str.
+        locs : tuple of str
             A two-element tuple of the two-character location specification.  For every pair in
             phases, the location specification refers to which location in the first phase is
             connected to which location in the second phase.  If the user wishes to specify
             different locations for different phase pairings, those phase pairings must be made
             in separate calls to link_phases.
-        units : int, str, dict of {str: str or None}, or None
-            The units of the linkage residual.  If an integer (default), then automatically
-            determine the units of each variable in the linkage if possible.  Those that cannot
-            be determined to be a time, state, control, design parameter, or control rate will
-            be assumed to have units None.  If given as a dict, it should map the name of each
-            variable in vars to the appropriate units.
         connected : bool
             Set to True to directly connect the phases being linked. Otherwise, create constraints
             for the optimizer to solve.
+
+        See Also
+        --------
+        add_linkage_constraint : Explicitly add a single phase linkage constraint.
 
         Examples
         --------
@@ -856,14 +880,15 @@ class Trajectory(om.Group):
 
         Phase linkages assume that, for each pair, the state/control values at the end ('final')
         of the first phase are linked to the state/control values at the start of the second phase
-        ('initial').  The user can override this behavior, but
-        they must specify a pair of location strings for each pair given in `phases`.  For instance,
-        in the following example phases 'a' and 'b' have the same initial time and state, but
-        phase 'c' follows phase 'b'.  Note since there are three phases provided, there are two
-        linkages and thus two pairs of location specifiers given.
+        ('initial').
+
+        The user can override this behavior, but they must specify a pair of location strings for
+        each pair given in `phases`.  For instance, in the following example phases 'a' and 'b'
+        have the same initial time and state, but phase 'c' follows phase 'b'.  Note since there
+        are three phases provided, there are two linkages and thus two pairs of location
+        specifiers given.
 
         >>> t.link_phases(['a', 'b', 'c'], locs=[('initial', 'initial'), ('final', 'initial')])
-
         """
         num_links = len(phases) - 1
 

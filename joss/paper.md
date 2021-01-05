@@ -29,7 +29,7 @@ bibliography: paper.bib
 # Summary
 
 Dymos is a library for optimizing control schedules for dynamic systems --- sometimes referred to as trajectory optimization.
-There are a number of other optimal control libraries that tackle a similar kind of problem, such as OTIS4 [@Paris2006], GPOPS-II [@Patterson2014GPOPSII],and CASADI [@Andersson2018].
+There are a number of other optimal control libraries that tackle similar kinds of problems, such as OTIS4 [@Paris2006], GPOPS-II [@Patterson2014GPOPSII],and CASADI [@Andersson2018].
 Dymos can operate in a similar manner to these codes where it is focused purely on the optimal control problem, 
 but it is unique in that it can also support broader cases where trajectory optimization is just one component in a larger physical model. 
 This allows Dymos to play a critical role in solving problems where the physical design of a system is optimized simultaneously with control schedule governing its transient performance. 
@@ -44,9 +44,11 @@ Some optimal control libraries tackle this numerical challenge with a monolithic
 While effective, the monolithic nature is both less efficient[@mader2008adjoint; @kenway2019effective] and less flexible.
 
 Instead, Dymos uses a modular approach that allows users to select any combination of finite-difference, complex-step [@Martins2003CS], algorithmic differentiation, and hand differentiation that suits their modeling needs.
-This flexibility is achieved by leveraging the data passing and efficient differentiation fearures of NASA's OpenMDAO framework[@Gray2019a]. 
+This flexibility is achieved by leveraging the data passing and efficient differentiation features of NASA's OpenMDAO framework[@Gray2019a].
+OpenMDAO efficiently computes derivatives for multidisciplinary optimization using techniques based on the research of Hwang and Martins [@hwang2018b].
 Dymos extends OpenMDAO by adding differentiated time-integration schemes along with the necessary APIs for users to plug their ODEs and DAEs into those schemes.
 It also provides further APIs to enable the input and output of information from the optimal control problem, in order to couple with the physical design models.
+Some of the original methods and use-cases which drove the development of Dymos were first published by Falck and Gray in 2019[@falck2019].
 
 
 ## The dymos perspective on optimal control

@@ -3,8 +3,10 @@ from collections.abc import Sequence
 import numpy as np
 
 import openmdao.api as om
+from openmdao.core.constants import _UNDEFINED
 
 from .common import BoundaryConstraintComp, ControlGroup, PolynomialControlGroup, PathConstraintComp
+from ..phase.options import StateOptionsDictionary
 from ..utils.constants import INF_BOUND
 from ..utils.misc import get_rate_units, _unspecified, get_target_metadata, get_source_metadata
 
@@ -72,7 +74,7 @@ class TranscriptionBase(object):
             if time_options['targets']:
                 ode = phase._get_subsystem(self._rhs_source)
 
-                _, time_options['units'] = get_target_metadata(ode, name=name,
+                _, time_options['units'] = get_target_metadata(ode, name='time',
                                                                user_targets=time_options['targets'],
                                                                user_units=time_options['units'],
                                                                user_shape='')
@@ -244,20 +246,14 @@ class TranscriptionBase(object):
         # Interrogate shapes and units.
         for name, options in phase.control_options.items():
 
-            full_shape, units = get_target_metadata(ode, name=name,
-                                                    user_targets=options['targets'],
-                                                    user_units=options['units'],
-                                                    user_shape=options['shape'],
-                                                    control_rate=True)
+            shape, units = get_target_metadata(ode, name=name,
+                                               user_targets=options['targets'],
+                                               user_units=options['units'],
+                                               user_shape=options['shape'],
+                                               control_rate=True)
 
             options['units'] = units
-
-            # Determine and store the pre-discretized state shape for use by other components.
-            if len(full_shape) < 2:
-                if options['shape'] in (_unspecified, None):
-                    options['shape'] = (1, )
-            else:
-                options['shape'] = full_shape[1:]
+            options['shape'] = shape
 
         if phase.control_options:
             phase.control_group.configure_io()
@@ -283,20 +279,14 @@ class TranscriptionBase(object):
         # Interrogate shapes and units.
         for name, options in phase.polynomial_control_options.items():
 
-            full_shape, units = get_target_metadata(ode, name=name,
-                                                    user_targets=options['targets'],
-                                                    user_units=options['units'],
-                                                    user_shape=options['shape'],
-                                                    control_rate=True)
+            shape, units = get_target_metadata(ode, name=name,
+                                               user_targets=options['targets'],
+                                               user_units=options['units'],
+                                               user_shape=options['shape'],
+                                               control_rate=True)
 
             options['units'] = units
-
-            # Determine and store the pre-discretized state shape for use by other components.
-            if len(full_shape) < 2:
-                if options['shape'] in (_unspecified, None):
-                    options['shape'] = (1, )
-            else:
-                options['shape'] = full_shape[1:]
+            options['shape'] = shape
 
         if phase.polynomial_control_options:
             phase.polynomial_control_group.configure_io()
@@ -334,7 +324,8 @@ class TranscriptionBase(object):
                 shape, units = get_target_metadata(ode, name=name,
                                                    user_targets=options['targets'],
                                                    user_shape=options['shape'],
-                                                   user_units=options['units'])
+                                                   user_units=options['units'],
+                                                   dynamic=options['dynamic'])
                 options['units'] = units
                 options['shape'] = shape
 
@@ -344,8 +335,11 @@ class TranscriptionBase(object):
                         parts = pathname.split('.')
                         sub_sys = parts[0]
                         tgt_var = '.'.join(parts[1:])
-                        phase.promotes(sub_sys, inputs=[(tgt_var, prom_name)],
-                                       src_indices=src_idxs, flat_src_indices=True)
+                        if options['dynamic']:
+                            phase.promotes(sub_sys, inputs=[(tgt_var, prom_name)],
+                                           src_indices=src_idxs, flat_src_indices=True)
+                        else:
+                            phase.promotes(sub_sys, inputs=[(tgt_var, prom_name)])
 
                 val = options['val']
                 _shape = options['shape']
@@ -353,6 +347,52 @@ class TranscriptionBase(object):
                 phase.set_input_defaults(name=src_name,
                                          val=shaped_val,
                                          units=options['units'])
+
+    def configure_state_discovery(self, phase):
+        """
+        Searches phase output metadata for any declared states and adds them.
+
+        Parameters
+        ----------
+        phase
+            The phase object to which this transcription instance applies.
+        """
+        state_options = phase.state_options
+        ode = phase._get_subsystem(self._rhs_source)
+        out_meta = ode.get_io_metadata(iotypes='output', metadata_keys=['tags'],
+                                       get_remote=True)
+
+        for name, meta in out_meta.items():
+            tags = meta['tags']
+            prom_name = meta['prom_name']
+            state = None
+            for tag in sorted(tags):
+
+                # Declared as rate_source.
+                if tag.startswith('state_rate_source:'):
+                    state = tag[18:]
+                    if state not in state_options:
+                        state_options[state] = StateOptionsDictionary()
+                        state_options[state]['name'] = state
+
+                    if state_options[state]['rate_source'] is not None:
+                        if state_options[state]['rate_source'] != prom_name:
+                            raise ValueError(f"rate_source has been declared twice for state "
+                                             f"'{state}' which is tagged on '{name}'.")
+
+                    state_options[state]['rate_source'] = prom_name
+
+                # Declares units for state.
+                if tag.startswith('state_units:'):
+                    if state is None:
+                        raise ValueError(f"'state_units:' tag declared on '{name}' also requires "
+                                         f"that the 'state_rate_source:' tag be declared.")
+                    state_options[state]['units'] = tag[12:]
+
+        # Check over all existing states and make sure we aren't missing any rate sources.
+        for name, options in state_options.items():
+            if options['rate_source'] is None:
+                raise ValueError(f"State '{name}' is missing a rate_source.")
 
     def setup_states(self, phase):
         raise NotImplementedError('Transcription {0} does not implement method '
@@ -405,7 +445,7 @@ class TranscriptionBase(object):
         bc_dict = phase._initial_boundary_constraints \
             if loc == 'initial' else phase._final_boundary_constraints
 
-        sys_name = '{0}_boundary_constraints'.format(loc)
+        sys_name = f'{loc}_boundary_constraints'
         bc_comp = phase._get_subsystem(sys_name)
 
         for var, options in bc_dict.items():
@@ -631,7 +671,7 @@ class TranscriptionBase(object):
             constraint_kwargs.pop('constraint_name', None)
             phase._get_subsystem('path_constraints')._add_path_constraint_configure(con_name, **constraint_kwargs)
 
-    def setup_objective(self, phase):
+    def configure_objective(self, phase):
         """
         Find the path of the objective(s) and add the objective using the standard OpenMDAO method.
         """
@@ -671,9 +711,6 @@ class TranscriptionBase(object):
                                               scaler=options['scaler'],
                                               parallel_deriv_color=options['parallel_deriv_color'],
                                               vectorize_derivs=options['vectorize_derivs'])
-
-    def configure_objective(self, phase):
-        pass
 
     def _get_boundary_constraint_src(self, name, loc, phase):
         raise NotImplementedError('Transcription {0} does not implement method'
