@@ -118,7 +118,7 @@ but the nonlinear solver poses numerical challenges for computing derivatives fo
 A simple approach to this is to just finite-difference across the nonlinear solver, but this is has been shown to be expensive and numerically unstable[@gray2014derivatives]. 
 Another option, taken by some optimal control libraries, is to apply monolithic algorithmic differentiation[@griewank2003mathematical] across the nonlinear solver.
 While it does provide accurate derivatives, the monolithic approach is expensive and uses a lot of memory[@mader2008adjoint; @kenway2019effective]. 
-The most efficient approach is to use a pair of analytic derivative approachs called the direct and adjoint methods, which were unified into a single unified derivative equation (UDE) by Hwang and Martins[@hwang2018b]. 
+The most efficient approach is to use a pair of analytic derivative approaches called the direct and adjoint methods, which were unified into a single unified derivative equation (UDE) by Hwang and Martins[@hwang2018b].
 
 Dymos adopts the UDE approach which uses a linear solver to compute total derivatives needed by the optimizer using only partial derivatives of the residual equations in the DAE.
 This approach offers two key advantages. 
@@ -155,7 +155,8 @@ Some caution with terminology must be taken here because the term "implicit" is 
 but that is not what is meant in an optimal-control context. 
 Here, an explicit phases is one where the full time history is computed starting from the initial value and propagating forwards or from the final value and propagating backwards. 
 From the optimizers perspective it will set values for the design parameters ($\bar{d}$) and the controls ($\bar{u}$) and can expect to be given a physically valid time history as the output.
-Wrapping an optimizer around an explicit phase gives what is traditionally called a "shooting method" in the optimal-control world.  
+Wrapping an optimizer around an explicit phase gives what is traditionally called a "shooting method" in the optimal-control world.
+
 In contrast, implicit phases don't provide valid time histories on their own. 
 Instead, they add the entire time-history of the state vector ($\bar{x}$) as an additional design variable to the optimizer and add an associated set of defect constraints that must be driven to 0 to enforce physics at the discrete points of the time integration is evaluated at. 
 The net effect is that the full time history is only known once the optimization is fully converged. 
