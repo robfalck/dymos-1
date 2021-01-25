@@ -24,8 +24,6 @@ affiliations:
     index: 2
 date: 26 June 2020
 bibliography: paper.bib
-header-includes:
-    - \usepackage{setspace}
 ---
 
 # Summary
@@ -220,7 +218,386 @@ As a simple use-case of Dymos, consider the classic brachistochrone optimal cont
 There is a bead sliding along a frictionless wire strung between two points of different heights, 
 and we seek the shape of the wire such that the bead travels from start to finish in the shortest time. 
 The time-varying control is the angle of the wire at each point in time and there are no design parameters, 
-which makes this a pure optimal-control problem. 
+which makes this a pure optimal-control problem.
+
+\small
+```python
+# First define a system which computes the equations of motion
+class BrachistochroneEOM(om.ExplicitComponent):
+    def initialize(self):
+        self.options.declare('num_nodes', types=int)
+
+    def setup(self):
+        nn = self.options['num_nodes']
+
+        # Inputs
+        self.add_input('v', val=np.zeros(nn), units='m/s',
+                       desc='velocity')
+        self.add_input('theta', val=np.zeros(nn), units='rad',
+                       desc='angle of wire')
+        self.add_output('xdot', val=np.zeros(nn), units='m/s',
+                        desc='velocity component in x')
+        self.add_output('ydot', val=np.zeros(nn), units='m/s',
+                        desc='velocity component in y')
+        self.add_output('vdot', val=np.zeros(nn), units='m/s**2',
+                        desc='acceleration magnitude')
+
+        # Setup partials for the analytic derivatives
+        # These all have diagonal partial-derivative jacobians
+        ar = np.arange(self.options['num_nodes'])
+
+        # Ask OpenMDAO to compute the partial derivatives using complex-step 
+        # with a partial coloring algorithm for improved performance
+        self.declare_partials(of='*', wrt='*', method='cs')
+        self.declare_coloring(wrt='*', method='cs', show_summary=True)
+
+    def compute(self, inputs, outputs):
+        v, theta = inputs.values()
+
+        outputs['vdot'] = 9.80665 * np.cos(theta)
+        outputs['xdot'] = v * np.sin(theta)
+        outputs['ydot'] = -v * np.cos(theta)
+
+p = om.Problem(model=om.Group())
+
+# Define a Trajectory object
+traj = p.model.add_subsystem('traj', dm.Trajectory())
+
+# Define a Dymos Phase object with GaussLobatto Transcription
+tx = dm.GaussLobatto(num_segments=10, order=3)
+phase = dm.Phase(ode_class=BrachistochroneEOM,
+                 transcription=tx)
+
+traj.add_phase(name='phase0', phase=phase)
+
+# Set the time options
+phase.set_time_options(fix_initial=True,
+                       duration_bounds=(0.5, 10.0))
+# Set the state options
+phase.add_state('x', rate_source='xdot',
+                fix_initial=True, fix_final=True)
+phase.add_state('y', rate_source='ydot',
+                fix_initial=True, fix_final=True)
+phase.add_state('v', rate_source='vdot',
+                fix_initial=True, fix_final=False)
+# Define theta as a control.
+phase.add_control(name='theta', units='rad',
+                  lower=0, upper=np.pi)
+# Minimize final time.
+phase.add_objective('time', loc='final')
+
+# Set the driver.
+p.driver = om.ScipyOptimizeDriver()
+
+# Allow OpenMDAO to automatically determine 
+#     total derivative sparsity pattern.
+# This works in conjunction with partial derivative 
+#     coloring to give a large speedup
+p.driver.declare_coloring()
+
+# Setup the problem
+p.setup()
+
+# Now that the OpenMDAO problem is setup, we can guess the
+# values of time, states, and controls.
+p.set_val('traj.phase0.t_duration', 2.0)
+
+# States and controls here use a linearly interpolated
+# initial guess along the trajectory.
+p.set_val('traj.phase0.states:x',
+          phase.interpolate(ys=[0, 10], nodes='state_input'),
+          units='m')
+p.set_val('traj.phase0.states:y',
+          phase.interpolate(ys=[10, 5], nodes='state_input'),
+          units='m')
+p.set_val('traj.phase0.states:v',
+          phase.interpolate(ys=[0, 5], nodes='state_input'),
+          units='m/s')
+# constant initial guess for control 
+p.set_val('traj.phase0.controls:theta', 90, units='deg')
+
+# Run the driver to solve the problem and generate default plots of 
+# state and control values vs time
+dm.run_problem(p, make_plots=True, simulate=True)
+
+# Additional custom plot of y vs x to show the actual wire shape
+fig, ax = plt.subplots()
+x = p.get_val('traj.phase0.timeseries.states:x', units='m')
+y = p.get_val('traj.phase0.timeseries.states:y', units='m')
+ax.plot(x,y, marker='o')
+ax.set_xlabel('x (m)')
+ax.set_ylabel('y (m)')
+fig.savefig('brachistochone_yx.png', bbox_inches='tight')
+```
+\normalsize
+
+The built-in plotting utility in Dymos will plot all relevant quantities vs time.
+
+![Brachistochrone Solution: y state time history](brachistochrone_states_y.png){width=50%}
+![Brachistochrone Solution: x state time history](brachistochrone_states_x.png){width=50%}
+
+
+The more traditional way to view the brachistochrone solution is to view the actual shape of the wire (i.e. y vs x)
+
+![Brachistochrone Solution: y as a function of x](brachistochone_yx.png){width=50%}
+
+
+## Coupled co-design example: Designing a cannonball
+
+This co-design example seeks to find the best size cannonball to maximize range considering aerodynamic drag subject to a limit on initial kinetic energy.
+Given the same kinetic energy, a lighter ball will go faster and hence farther if aerodynamic drag is ignored.
+When you factor in drag, heavier cannonballs will have more inertia to counteract drag.
+There is a balance between these two effect, which the optimizer seeks to find.
+
+Here the static calculations are to find the mass and frontal area of the cannonball, given its radius.
+Then the ODE takes the mass and area as inputs and via Dymos can compute the total range.
+For demonstration purposes the trajectory is broken up into an ascent and descent phase, with the break being set up exactly at the apogee of the flight path.
+
+\small
+```python
+import numpy as np
+from scipy.interpolate import interp1d
+
+import openmdao.api as om
+
+import dymos as dm
+from dymos.models.atmosphere.atmos_1976 import USatm1976Data
+
+# CREATE an atmosphere interpolant
+english_to_metric_rho = om.unit_conversion('slug/ft**3', 'kg/m**3')[0]
+english_to_metric_alt = om.unit_conversion('ft', 'm')[0]
+rho_interp = interp1d(np.array(USatm1976Data.alt*english_to_metric_alt, dtype=complex), 
+                      np.array(USatm1976Data.rho*english_to_metric_rho, dtype=complex), kind='linear')
+
+
+class CannonballSize(om.ExplicitComponent):
+    """
+    Static calculations performed before the dynamic model
+    """
+
+    def setup(self):
+        self.add_input(name='radius', val=1.0, 
+                       desc='cannonball radius', units='m')
+        self.add_input(name='density', val=7870., 
+                       desc='cannonball density', units='kg/m**3')
+
+        self.add_output(name='mass', shape=(1,), 
+                       desc='cannonball mass', units='kg')
+        self.add_output(name='area', shape=(1,), 
+                       desc='aerodynamic reference area', units='m**2')
+
+        self.declare_partials(of='*', wrt='*', method='cs')
+
+    def compute(self, inputs, outputs):
+        radius = inputs['radius']
+        rho = inputs['density']
+
+        outputs['mass'] = (4/3.) * rho * np.pi * radius ** 3
+        outputs['area'] = np.pi * radius ** 2
+
+
+class CannonballODE(om.ExplicitComponent): 
+    """
+    Cannonball ODE assuming flat earth and accounting for air resistance
+    """
+
+    def initialize(self): 
+        self.options.declare('num_nodes', types=int)
+
+    def setup(self): 
+        nn = self.options['num_nodes']
+
+        # static parameters
+        self.add_input('mass', units='kg')
+        self.add_input('area', units='m**2')
+
+        # time varying inputs 
+        self.add_input('alt', units='m', shape=nn)
+        self.add_input('v', units='m/s', shape=nn)
+        self.add_input('gam', units='rad', shape=nn)
+
+        # state rates
+        self.add_output('v_dot', shape=nn, units='m/s**2')
+        self.add_output('gam_dot', shape=nn, units='rad/s')
+        self.add_output('h_dot', shape=nn, units='m/s')
+        self.add_output('r_dot', shape=nn, units='m/s')
+        self.add_output('ke', shape=nn, units='J')
+
+        # Ask OpenMDAO to compute the partial derivatives using complex-step 
+        # with a partial coloring algorithm for improved performance
+        self.declare_partials('*', '*', method='cs')
+        self.declare_coloring(wrt='*', method='cs')
+
+    def compute(self, inputs, outputs): 
+
+        gam = inputs['gam']
+        v = inputs['v']
+        alt = inputs['alt']
+        m = inputs['mass']
+        S = inputs['area']
+
+        CD = 0.5 # good assumption for a sphere
+        GRAVITY = 9.80665 # m/s**2
+
+        # handle complex-step gracefully from the interpolant
+        if np.iscomplexobj(alt): 
+            rho = rho_interp(inputs['alt'])
+        else: 
+            rho = rho_interp(inputs['alt']).real
+
+        q = 0.5*rho*inputs['v']**2
+        qS = q * S
+        D = qS * CD
+        cgam = np.cos(gam)
+        sgam = np.sin(gam)
+        outputs['v_dot'] = - D/m-GRAVITY*sgam
+        outputs['gam_dot'] = -(GRAVITY/v)*cgam
+        outputs['h_dot'] = v*sgam
+        outputs['r_dot'] = v*cgam
+        outputs['ke'] = 0.5*m*v**2
+
+if __name__ == "__main__": 
+
+    p = om.Problem()
+
+    ###################################
+    # Co-design part of the model, 
+    # static analysis outside of Dymos
+    ###################################
+    static_calcs = p.model.add_subsystem('static_calcs', CannonballSize())
+    static_calcs.add_design_var('radius', lower=0.01, upper=0.10, 
+                                ref0=0.01, ref=0.10)
+
+    p.model.connect('static_calcs.mass', 'traj.parameters:mass')
+    p.model.connect('static_calcs.area', 'traj.parameters:area')
+
+    traj = p.model.add_subsystem('traj', dm.Trajectory())
+    # Declare parameters that will be constant across 
+    # the two phases of the trajectory, so we can connect to it only once
+    traj.add_parameter('mass', units='kg', val=0.01, dynamic=False)
+    traj.add_parameter('area', units='m**2', dynamic=False)
+
+    tx = dm.Radau(num_segments=5, order=3, compressed=True)
+    ascent = dm.Phase(transcription=tx, ode_class=CannonballODE)
+    traj.add_phase('ascent', ascent)
+
+    ###################################
+    # first phase: ascent
+    ###################################
+    # All initial states except flight path angle are fixed
+    ascent.add_state('r', units='m', rate_source='r_dot', 
+                     fix_initial=True, fix_final=False)
+    ascent.add_state('h', units='m', rate_source='h_dot', 
+                     fix_initial=True, fix_final=False)
+    ascent.add_state('v', units='m/s', rate_source='v_dot', 
+                     fix_initial=False, fix_final=False)
+    # Final flight path angle is fixed (
+    #     we will set it to zero so that the phase ends at apogee)
+    ascent.add_state('gam', units='rad', rate_source='gam_dot', 
+                     fix_initial=False, fix_final=True)    
+    ascent.set_time_options(fix_initial=True, duration_bounds=(1, 100), 
+                            duration_ref=100, units='s')
+
+    ascent.add_parameter('mass', units='kg', val=0.01, dynamic=False)
+    ascent.add_parameter('area', units='m**2', dynamic=False)
+
+    # Limit the initial muzzle energy to create a well posed problem 
+    # with respect to cannonball size and initial velocity
+    ascent.add_boundary_constraint('ke', loc='initial', units='J',
+                                   upper=400000, lower=0, ref=100000)
+
+    ###################################
+    # second phase: descent
+    ###################################
+    tx = dm.GaussLobatto(num_segments=5, order=3, compressed=True)
+    descent = dm.Phase(transcription=tx, ode_class=CannonballODE)
+    traj.add_phase('descent', descent )
+
+    # All initial states and time are free so their 
+    #    values can be linked to the final ascent values
+    # Final altitude is fixed to 0 to ensure final impact on the ground
+    descent.add_state('r', units='m', rate_source='r_dot', 
+                      fix_initial=False, fix_final=False)
+    descent.add_state('h', units='m', rate_source='h_dot', 
+                      fix_initial=False, fix_final=True)
+    descent.add_state('gam', units='rad', rate_source='gam_dot', 
+                      fix_initial=False, fix_final=False)
+    descent.add_state('v', units='m/s', rate_source='v_dot',
+                      fix_initial=False, fix_final=False)
+    descent.set_time_options(initial_bounds=(.5, 100), duration_bounds=(.5, 100),
+                             duration_ref=100, units='s')
+    
+    descent.add_parameter('mass', units='kg', val=0.01, dynamic=False)
+    descent.add_parameter('area', units='m**2', dynamic=False)
+
+    # Link Phases (link time and all state variables)
+    traj.link_phases(phases=['ascent', 'descent'], vars=['*'])
+
+    # maximize range
+    descent.add_objective('r', loc='final', ref=-1.0)
+
+    p.driver = om.pyOptSparseDriver()
+    p.driver.options['optimizer'] = 'SLSQP'
+    p.driver.declare_coloring()
+
+    # Finish Problem Setup
+    p.setup()
+
+    # Set Initial guesses for static dvs and ascent
+    p.set_val('static_calcs.radius', 0.05, units='m')
+    p.set_val('traj.ascent.t_duration', 10.0)
+
+    p.set_val('traj.ascent.states:r', 
+              ascent.interpolate(ys=[0, 100], nodes='state_input'))
+    p.set_val('traj.ascent.states:h', 
+              ascent.interpolate(ys=[0, 100], nodes='state_input'))
+    p.set_val('traj.ascent.states:v', 
+              ascent.interpolate(ys=[200, 150], nodes='state_input'))
+    p.set_val('traj.ascent.states:gam', 
+              ascent.interpolate(ys=[25, 0], nodes='state_input'), units='deg')
+
+    # more intitial guesses for descent
+    p.set_val('traj.descent.t_initial', 10.0)
+    p.set_val('traj.descent.t_duration', 10.0)
+
+    p.set_val('traj.descent.states:r', 
+               descent.interpolate(ys=[100, 200], nodes='state_input'))
+    p.set_val('traj.descent.states:h', 
+              descent.interpolate(ys=[100, 0], nodes='state_input'))
+    p.set_val('traj.descent.states:v', 
+              descent.interpolate(ys=[150, 200], nodes='state_input'))
+    p.set_val('traj.descent.states:gam', 
+              descent.interpolate(ys=[0, -45], nodes='state_input'), units='deg')
+
+    dm.run_problem(p, simulate=True, make_plots=True)
+
+    fig, ax = plt.subplots()
+    x0 = p.get_val('traj.ascent.timeseries.states:r', units='m')
+    y0 = p.get_val('traj.ascent.timeseries.states:h', units='m')
+    x1 = p.get_val('traj.descent.timeseries.states:r', units='m')
+    y1 = p.get_val('traj.descent.timeseries.states:h', units='m')
+    tab20 = plt.cm.get_cmap('tab20').colors
+    ax.plot(x0,y0, marker='o', label='ascent', color=tab20[0])
+    ax.plot(x1,y1, marker='o', label='descent', color=tab20[1])
+    ax.legend(loc='best')
+    ax.set_xlabel('range (m)')
+    ax.set_ylabel('height (m)')
+    fig.savefig('cannonball_hr.png', bbox_inches='tight')
+```
+\normalsize
+
+The built in plotting in Dymos will give time histories of all the time varying quantities.
+For example, these are the time histories for the range and height:
+
+![Cannonball Solution: height vs time](cannonball_states_h.png){width=50%}
+![Cannonball Solution: range vs time](cannonball_states_r.png){width=50%}
+
+A more natural way to view the solution is to consider height vs range:
+
+![Cannonball Solution: height vs time](cannonball_hr.png){width=50%}
+
+The parabolic trajectory is slightly skewed due to the effect of air resistance slowing down the cannonball so it is moving slower during the descent than the ascent.
+
 
 # Acknowledgements
 
