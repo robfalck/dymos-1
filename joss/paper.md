@@ -30,19 +30,19 @@ bibliography: paper.bib
 
 Dymos is a library for optimizing control schedules for dynamic systems --- sometimes referred to as  optimal control or trajectory optimization.
 There are a number of other optimal control libraries that tackle similar kinds of problems, such as OTIS4 [@Paris2006], GPOPS-II [@Patterson2014GPOPSII],and CASADI [@Andersson2018].
-These tools all rely on gradient based optimization to solve optimal control problems, though their methods of computing the gradients vary. 
-Dymos is built on top of the OpenMDAO framework[@Gray2019a] and supports its modular derivative system which allows users to mix-and-match from finite-differencing, complex-step, hand-differentiated, and algorithmic differentiation. 
-This flexibility allows Dymos to efficiently solve optimal control problems constructed with both ordinary differential equations (ODE) and differential algebraic equations (DAE). 
+These tools all rely on gradient based optimization to solve optimal control problems, though their methods of computing the gradients vary.
+Dymos is built on top of the OpenMDAO framework[@Gray2019a] and supports its modular derivative system which allows users to mix-and-match from finite-differencing, complex-step, hand-differentiated, and algorithmic differentiation.
+This flexibility allows Dymos to efficiently solve optimal control problems constructed with both ordinary differential equations (ODE) and differential algebraic equations (DAE).
 
 Dymos can also help solve more general optimization problems where dynamics are only one part in a larger system level model with additional --- potentially computationally expensive --- calculations that come before and after the dynamic calculations.  
 These broader problems are commonly referred to co-design, controls-co-design, and multidisciplinary design optimization.
-Dymos provides specific APIs and features that make it possible to integrate traditional optimal-control models into a co-design context, while still supporting analytic derivatives that are necessary for computational efficiency in these complex use cases. 
+Dymos provides specific APIs and features that make it possible to integrate traditional optimal-control models into a co-design context, while still supporting analytic derivatives that are necessary for computational efficiency in these complex use cases.
 An example of a co-design problem that was solved with Dymos is the coupled trajectory-thermal design of an electric vertical takeoff and landing aircraft where the thermal management and propulsion systems were designed simultaneously with the flight trajectories to ensure no components overheated[@Hariton2020a].
 
 
 # Difference between optimal-control and co-design
-Optimal-control and co-design problems deal with dynamic systems. 
-There a vector of time varying state variables ($\bar{x}$) who's behavior is affected by time ($t$), a vector of dynamic controls ($\bar{u)}$), and a vector of static design parameters ($\bar{d}$). 
+Optimal-control and co-design problems deal with dynamic systems.
+There a vector of time varying state variables ($\bar{x}$) who's behavior is affected by time ($t$), a vector of dynamic controls ($\bar{u)}$), and a vector of static design parameters ($\bar{d}$).
 The evolution of the states over time is governed by an ordinary differential equation (ODE) or differential algebraic equation (DAE):
 \begin{align*}
   \dot{\bar{x}} = f_{ode}(\bar{x},t,\bar{u},\bar{d})
@@ -52,7 +52,7 @@ To optimize a dynamic system we also need to account for the objective function 
 \begin{align*}
   \mathrm{J} = f_{obj}(\bar{x},t,\bar{u},\bar{d})
 \end{align*}
-In addition, there are constraints that typically need to be enforced. 
+In addition, there are constraints that typically need to be enforced.
 \begin{align*}
   \mathrm{Time:}& \qquad {t}_{lb} \leq t \leq {t}_{ub} \\
   \mathrm{State \, Variables:}& \qquad \bar{x}_{lb} \leq \bar{x} \leq \bar{x}_{ub} \\
@@ -65,63 +65,63 @@ In addition, there are constraints that typically need to be enforced.
 
 
 In the mathematical sense what distinguishes optimal-control from co-design is the particulars of which design variables and constraints are actually considered by the optimization.  
-Pure optimal control problems deal with an already designed system and seek to maximize performance by adjusting dynamic quantities ($t, \bar{x}, \bar{u}$) such as position, speed, fuel-burned, battery state of charge, etc. 
-Co-design problems simultaneously vary the static design parameters of a system ($\bar{d}$) and its dynamic behavior ($t, \bar{x}, \bar{u}$) to reach maximum performance. 
+Pure optimal control problems deal with an already designed system and seek to maximize performance by adjusting dynamic quantities ($t, \bar{x}, \bar{u}$) such as position, speed, fuel-burned, battery state of charge, etc.
+Co-design problems simultaneously vary the static design parameters of a system ($\bar{d}$) and its dynamic behavior ($t, \bar{x}, \bar{u}$) to reach maximum performance.
 
 
-In practice, the mathematical distinction is too rigid and a more practical distinction is made based on the where the static and dymamic calculations are implemented and how complex each of them are. 
+In practice, the mathematical distinction is too rigid and a more practical distinction is made based on the where the static and dymamic calculations are implemented and how complex each of them are.
 For very simple physical design parameters (e.g. the radius of a cannon ball, spring constants, linkage lengths, etc) it is common to integrate the design calculations directly into the ODE.
-Even though the calculations are static in nature, they can easily be coded as part of the ODE and still fits well into the optimal-control paradigm. 
-The optimization structure thus looks like this: 
+Even though the calculations are static in nature, they can easily be coded as part of the ODE and still fits well into the optimal-control paradigm.
+The optimization structure thus looks like this:
 
 ![Model structure for a traditional optimal control problem](flow_charts/opt_control.png){width=45%}
 
-However, not all problems are can be handled in with such a compact implementation. 
-For example if the physical design problem included shaping of an airfoil using expensive numerical solutions to partial differential equations (PDE) to predict drag, then you would not want to embed that PDE solver into the dynamic model. 
-Instead you could set up a coupled model with the PDE solver going first performing, and passing a table of data to be interpolated to the dynamic model. 
-This effectively splits calculations up into static and a dynamic components. 
-This implementation structure is called co-design. 
+However, not all problems are can be handled in with such a compact implementation.
+For example if the physical design problem included shaping of an airfoil using expensive numerical solutions to partial differential equations (PDE) to predict drag, then you would not want to embed that PDE solver into the dynamic model.
+Instead you could set up a coupled model with the PDE solver going first performing, and passing a table of data to be interpolated to the dynamic model.
+This effectively splits calculations up into static and a dynamic components.
+This implementation structure is called co-design.
 
-Traditionally, this a co-design implementation would be done via sequential optimization with a manual outer design iteration between the static and dynamic models, potentially with different teams of people working on each one. 
-One team would come up with a physical design using their own internal optimization setup. 
-A second team takes the design and generates optimal control profiles for it. 
+Traditionally, this a co-design implementation would be done via sequential optimization with a manual outer design iteration between the static and dynamic models, potentially with different teams of people working on each one.
+One team would come up with a physical design using their own internal optimization setup.
+A second team takes the design and generates optimal control profiles for it.
 Of course, the iterations don't need to be manual.
-It is also possible to set up an iterative loop around static and dynamic models to converge the problem numerically. 
+It is also possible to set up an iterative loop around static and dynamic models to converge the problem numerically.
 A sequential co-design implementation looks like this
 
 ![Model structure for a sequential co-design problem](flow_charts/sequential_co_design.png){width=100%}
 
-Dymos can support sequential co-design, 
-but its unique value is that it also enables a more tightly coupled co-design process with a single top level optimizer handling both parts of the problem simultaneously. 
+Dymos can support sequential co-design,
+but its unique value is that it also enables a more tightly coupled co-design process with a single top level optimizer handling both parts of the problem simultaneously.
 
 ![Model structure for a coupled co-design problem](flow_charts/coupled_co_design.png){width=75%}
 
-Compared to sequential co-design, coupled co-design offers the potential to find better designs with much lower computational cost. 
-However, it is also more challenging to implement because the top level optimizer requires derivatives propagated between the static and dynamic parts of the model. 
-Dymos overcomes this difficulty by providing APIs to exploit OpenMDAO's analytic derivative functionality at the model level. 
-Data can be passed from the static model to the dynamic model and vice versa, allowing the construction of the coupled model for optimization. 
+Compared to sequential co-design, coupled co-design offers the potential to find better designs with much lower computational cost.
+However, it is also more challenging to implement because the top level optimizer requires derivatives propagated between the static and dynamic parts of the model.
+Dymos overcomes this difficulty by providing APIs to exploit OpenMDAO's analytic derivative functionality at the model level.
+Data can be passed from the static model to the dynamic model and vice versa, allowing the construction of the coupled model for optimization.
 
 
 # ODE versus DAE
 
 Optimal control software typically requires that the dynamics of the system be defined as a set of ordinary differential equations (ODE) that use explicit functions to compute the rates of the state variables to be time-integrated.
-Sometimes the dynamics are instead posed as a set of differential algebraic equations (DAE), where some residual equations need to be satisfied implicitly in order to solve for the state rates. 
-From the perspective of an optimal-control or co-design problem both ODE and DAE formulations provide state rates that need to be integrated over time. 
-The difference is that ODEs are explicit functions which are relatively easy to differentiate, but DAEs are implicit functions which are much more difficult to differentiate. 
-Since the derivatives are needed to perform optimization, DAEs are more challenging to optimize. 
+Sometimes the dynamics are instead posed as a set of differential algebraic equations (DAE), where some residual equations need to be satisfied implicitly in order to solve for the state rates.
+From the perspective of an optimal-control or co-design problem both ODE and DAE formulations provide state rates that need to be integrated over time.
+The difference is that ODEs are explicit functions which are relatively easy to differentiate, but DAEs are implicit functions which are much more difficult to differentiate.
+Since the derivatives are needed to perform optimization, DAEs are more challenging to optimize.
 
 One relatively common use case for DAEs is differential inclusions, in which the state time-history is posed as a dynamic control and the traditional control schedule needed to achieve that time-history is found using a nonlinear solver within the dynamic model [@Seywald1994].
 For some problems differential inclusion provides a more natural and numerical beneficial design space for the optimizer to traverse,
 but the nonlinear solver poses numerical challenges for computing derivatives for the optimizer.
-A simple approach to this is to just finite-difference across the nonlinear solver, but this is has been shown to be expensive and numerically unstable[@gray2014derivatives]. 
+A simple approach to this is to just finite-difference across the nonlinear solver, but this is has been shown to be expensive and numerically unstable[@gray2014derivatives].
 Another option, taken by some optimal control libraries, is to apply monolithic algorithmic differentiation[@griewank2003mathematical] across the nonlinear solver.
-While it does provide accurate derivatives, the monolithic approach is expensive and uses a lot of memory[@mader2008adjoint; @kenway2019effective]. 
+While it does provide accurate derivatives, the monolithic approach is expensive and uses a lot of memory[@mader2008adjoint; @kenway2019effective].
 The most efficient approach is to use a pair of analytic derivative approaches called the direct and adjoint methods, which were unified into a single unified derivative equation (UDE) by Hwang and Martins[@hwang2018b].
 
 Dymos adopts the UDE approach which uses a linear solver to compute total derivatives needed by the optimizer using only partial derivatives of the residual equations in the DAE.
-This approach offers two key advantages. 
-First partial derivatives of the DAE residual equations are much less computationally challenging to compute. 
-Second, using the OpenMDAO underpinnings of Dymos users can construct their DAE in a modular fashion and combine various methods of computing the partial derivatives via finite-difference, complex-step [@Martins2003CS], algorithmic differentiation, or hand differentiation as needed. 
+This approach offers two key advantages.
+First partial derivatives of the DAE residual equations are much less computationally challenging to compute.
+Second, using the OpenMDAO underpinnings of Dymos users can construct their DAE in a modular fashion and combine various methods of computing the partial derivatives via finite-difference, complex-step [@Martins2003CS], algorithmic differentiation, or hand differentiation as needed.
 
 
 ## The Dymos perspective on optimal control
@@ -137,73 +137,73 @@ Each phase in a trajectory can use its own separate ODE .
 For instance, an aircraft with vertical takeoff and landing capability may use different ODEs for vertical flight and horizontal flight.
 ODE's are implemented as standard OpenMDAO models which are passed to phases at instantiation time with some additional annotations to identify the states, state-rates, and control inputs.
 
-Every phase uses its own specific time discretization tailored to the dynamics in that chunk of the time-history. 
+Every phase uses its own specific time discretization tailored to the dynamics in that chunk of the time-history.
 If one part of a trajectory has fast dynamics and another has slow dynamics,
 the time history can be broken into two phases with separate time discretizations.
 
-In the optimal-control community, there are a number of different techniques for discretizing the time integration, each one is called a transcription. 
-Some transcriptions are widely used, such as Euler or Runge-Kutta based transcriptions. 
-While these common ones are used in some cases, most optimal-control practitioners favor a more specialized class of transcriptions called direct collocation --- based on a class of pseudospectral methods. 
+In the optimal-control community, there are a number of different techniques for discretizing the time integration, each one is called a transcription.
+Some transcriptions are widely used, such as Euler or Runge-Kutta based transcriptions.
+While these common ones are used in some cases, most optimal-control practitioners favor a more specialized class of transcriptions called direct collocation --- based on a class of pseudospectral methods.
 Dymos supports two different collocation transcriptions: high-order Gauss-Lobatto [@Herman1996] and Radau [@Garg2009].
-Both of these represent time-histories as piece-wise polynomials of at least 3rd order and are formulated in a way that makes it possible to efficiently compute the needed quantities to perform integration in a numerically rigorous fashion. 
+Both of these represent time-histories as piece-wise polynomials of at least 3rd order and are formulated in a way that makes it possible to efficiently compute the needed quantities to perform integration in a numerically rigorous fashion.
 
 
-In addition to choosing a transcription, each phase can be configured to be solved in an explicit or implicit manner. 
-Some caution with terminology must be taken here because the term "implicit" is often used to describe time integration schemes (e.g. backwards Euler), 
-but that is not what is meant in an optimal-control context. 
-Here, an explicit phases is one where the full time history is computed starting from the initial value and propagating forwards or from the final value and propagating backwards. 
+In addition to choosing a transcription, each phase can be configured to be solved in an explicit or implicit manner.
+Some caution with terminology must be taken here because the term "implicit" is often used to describe time integration schemes (e.g. backwards Euler),
+but that is not what is meant in an optimal-control context.
+Here, an explicit phases is one where the full time history is computed starting from the initial value and propagating forwards or from the final value and propagating backwards.
 From the optimizers perspective it will set values for the design parameters ($\bar{d}$) and the controls ($\bar{u}$) and can expect to be given a physically valid time history as the output.
 Wrapping an optimizer around an explicit phase gives what is traditionally called a "shooting method" in the optimal-control world.  
-In contrast, implicit phases don't provide valid time histories on their own. 
-Instead, they add the entire time-history of the state vector ($\bar{x}$) as an additional design variable to the optimizer and add an associated set of defect constraints that must be driven to 0 to enforce physics at the discrete points of the time integration is evaluated at. 
-The net effect is that the full time history is only known once the optimization is fully converged. 
-In the context of the multidisciplinary design optimization field, explicit phases are similar to the multidisciplinary design feasible (MDF) optimization architecture and implicit phases are similar to the simultaneous analysis and design (SAND) optimization architecture[@Martins2013]. 
+In contrast, implicit phases don't provide valid time histories on their own.
+Instead, they add the entire time-history of the state vector ($\bar{x}$) as an additional design variable to the optimizer and add an associated set of defect constraints that must be driven to 0 to enforce physics at the discrete points of the time integration is evaluated at.
+The net effect is that the full time history is only known once the optimization is fully converged.
+In the context of the multidisciplinary design optimization field, explicit phases are similar to the multidisciplinary design feasible (MDF) optimization architecture and implicit phases are similar to the simultaneous analysis and design (SAND) optimization architecture[@Martins2013].
 
-Both implicit and explicit phases are useful in different circumstances. 
+Both implicit and explicit phases are useful in different circumstances.
 The explicit phases are more natural ways to formulate the problem to many because the match the way you would use time-integration without optimization.
-However when used with optimization they are also more computationally expensive, 
-sensitive to singularities in the ODE, 
-and potentially unable to converge to a valid solution. 
-Implicit phases tend to be less intuitive computationally, since they don't provide valid time histories without a converged optimization. 
-Their advantages are that they tend to be faster, more numerically stable, and more scalable --- though they are also highly sensitive to initial conditions and optimization scaling. 
+However when used with optimization they are also more computationally expensive,
+sensitive to singularities in the ODE,
+and potentially unable to converge to a valid solution.
+Implicit phases tend to be less intuitive computationally, since they don't provide valid time histories without a converged optimization.
+Their advantages are that they tend to be faster, more numerically stable, and more scalable --- though they are also highly sensitive to initial conditions and optimization scaling.
 
-Dymos supports both explicit and implicit phases for both its transcriptions, 
-and even allows mixtures of implicit and explicit states within a phase. 
-This flexibility is valuable because it allows users to tailor their optimization to suit their needs. 
+Dymos supports both explicit and implicit phases for both its transcriptions,
+and even allows mixtures of implicit and explicit states within a phase.
+This flexibility is valuable because it allows users to tailor their optimization to suit their needs.
 Switching transcriptions and changing from implicit to explicit requires very minor code changes - typically a single line in the run-script.
-Examples of how to swap between them are given in the code sample below. 
+Examples of how to swap between them are given in the code sample below.
 
-# Choice of optimization algorithm 
+# Choice of optimization algorithm
 
-Dymos does not shipt with its own optimizer, but relies on the optimizers that are available in your OpenMDAO installation. 
-OpenMDAO ships with an interface to the optimizers in SciPy [@2020SciPy-NMeth], 
+Dymos does not shipt with its own optimizer, but relies on the optimizers that are available in your OpenMDAO installation.
+OpenMDAO ships with an interface to the optimizers in SciPy [@2020SciPy-NMeth],
 and an additional wrapper for the pyoptsparse [@Wu_pyoptsparse_2020] library which has more powerful optimizer options such as SNOPT [@GilMS05] and IPOPT [@wachter2006].
 OpenMDAO also allows users to integrate their own optimizer of choice, which Dymos can then seamlessly use with without any additional modifications.
 For simple problems, Scipy's SLSQP optimizer generally works fine.
 On more challenging optimal-control problems, higher quality optimizers are important for getting good performance.
 
-Though you could technically choose any optimization algorithm, Dymos is designed to work primarily with gradient based algorithms. 
-In general, optimal-control and co-design problems will have both a very large number of design variables and a very large number of constraints. 
-Both of these issues make gradient based methods the strongly preferred choice. 
-Gradient free methods could potentially be used in certain narrow circumstances with problems built using purely explicit phases and set up intentionally to have a small set of design variables and constraints. 
+Though you could technically choose any optimization algorithm, Dymos is designed to work primarily with gradient based algorithms.
+In general, optimal-control and co-design problems will have both a very large number of design variables and a very large number of constraints.
+Both of these issues make gradient based methods the strongly preferred choice.
+Gradient free methods could potentially be used in certain narrow circumstances with problems built using purely explicit phases and set up intentionally to have a small set of design variables and constraints.
 
 
 ## Statement of Need
 
 When dealing with the design of complex systems that include transient behavior, co-design becomes critical[@garciasans2019].
 Broadly there are two approaches: sequential co-design or coupled co-design [@allison2004complex].
-The best choice depends on the degree of interaction, or coupling, between various sub-systems. 
+The best choice depends on the degree of interaction, or coupling, between various sub-systems.
 If the coupling is strong a coupled co-design approach is necessary to achieve the best performance.
 
 Though there are a number of effective optimal control libraries, they tend to assume that they are on top of the modeling stack.
-They frame every optimization problem as if it was a pure optimal-control problem, and hence are best suited to be used in a sequential co-design style. 
-This poses large challenges when expanding to tightly coupled problems, where the interactions between the static and dynamic systems are very strong. 
+They frame every optimization problem as if it was a pure optimal-control problem, and hence are best suited to be used in a sequential co-design style.
+This poses large challenges when expanding to tightly coupled problems, where the interactions between the static and dynamic systems are very strong.
 
 Dymos provides a set of unique capabilities that make coupled co-design possible via efficient gradient-based optimization methods.
-It provides differentiated time-integration schemes that can generate transient models from user provided ODEs, 
+It provides differentiated time-integration schemes that can generate transient models from user provided ODEs,
 along with APIs that enable users to couple these transient models with other models to form the co-design system while carrying the differentiation through that coupling.
-It also supports efficient differentiation of DAE's that include implicit relationships, which allows for a much broader set of possible ways to pose transient models. 
-These two features combined make Dymos capable of handling coupled co-design problems in a manner that is more efficient than a pure optimal-control approach. 
+It also supports efficient differentiation of DAE's that include implicit relationships, which allows for a much broader set of possible ways to pose transient models.
+These two features combined make Dymos capable of handling coupled co-design problems in a manner that is more efficient than a pure optimal-control approach.
 
 
 ## Selected applications of Dymos
@@ -215,9 +215,9 @@ Other authors have used Dymos to perform studies of aircraft acoustics [@Ingraha
 ## Optimal-control example: Brachistochone
 
 As a simple use-case of Dymos, consider the classic brachistochrone optimal control problem.
-There is a bead sliding along a frictionless wire strung between two points of different heights, 
-and we seek the shape of the wire such that the bead travels from start to finish in the shortest time. 
-The time-varying control is the angle of the wire at each point in time and there are no design parameters, 
+There is a bead sliding along a frictionless wire strung between two points of different heights,
+and we seek the shape of the wire such that the bead travels from start to finish in the shortest time.
+The time-varying control is the angle of the wire at each point in time and there are no design parameters,
 which makes this a pure optimal-control problem.
 
 \small
